@@ -1,4 +1,5 @@
 from matplotlib import pyplot as plt
+%matplotlib
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -28,7 +29,7 @@ nuclei_peaks = pd.DataFrame()
 
 for mname in tqdm(movs):
     print('analyzing {}'.format(mname))
-    movie = movs[mname][:5]
+    movie = movs[mname]
     print('normalizing...')
     movie_norm = normalize(movie) #np.stack([normalize(frame) for frame in movie])
     print('projecting through time axis...')
@@ -78,22 +79,32 @@ for mname in tqdm(movs):
     _nuclei_peaks = pd.merge(_nuclei, _parts, on=['frame', 'label'])
     _nuclei_peaks['movie'] = mname
     # transform particle whole movie coordinates to nuclei bounding box coordinates
-    _nuclei_peaks['x'] = _nuclei_peaks['x'] - _nuclei_peaks.bbox.apply(lambda x: x[1])
-    _nuclei_peaks['y'] = _nuclei_peaks['y'] - _nuclei_peaks.bbox.apply(lambda x: x[1])
+    _nuclei_peaks['bbx'] = _nuclei_peaks['x'] - _nuclei_peaks.bbox.apply(lambda x: x[1])
+    _nuclei_peaks['bby'] = _nuclei_peaks['y'] - _nuclei_peaks.bbox.apply(lambda x: x[0])
+    # get bounding box image
+    nuclei_peaks['bb_image'] = [movie[x.frame, x.bbox[0]:x.bbox[2],
+                x.bbox[1]:x.bbox[3]] for (_, x) in nuclei_peaks.iterrows()]
+
     nuclei_peaks = pd.concat([nuclei_peaks, _nuclei_peaks])
     # save markers and time-projected properties
     nuclei_proj[mname] = (_nuclei_proj, markers_proj)
-    break
+
+# save dataframe as pickle to preserve numpy arrays
+nuclei_peaks.to_pickle('nuclei_peaks.p')
 
 # get tracking movies for all nuclei
-
 nuc_movs = defaultdict(list)
-for name, nuc in tp.filter_stubs(nuclei_peaks, 5).groupby(['movie', 'label']):
-    nuc_mov = np.stack(nuc.drop_duplicates('frame').intensity_image)
-    nuc_trackmov = tracking_movie(nuc_mov, nuc)
-    nuc_movs[name[0]].append(nuc_trackmov)
+for (name, label), nuc in nuclei_peaks.groupby(['movie', 'label']):
+    #nuc_mov = np.stack(nuc.drop_duplicates('frame').intensity_image) # change for bbox
+    nuc_mov = np.stack(nuc.drop_duplicates('frame').bb_image) # change for bbox
+#    b = nuc.bbox.iloc[0]
+#    bx, by = (slice(b[0], b[2]), slice(b[1], b[3]))
+#    nuc_mov = movs[name][:, bx, by]
+    nuc_trackmov = tracking_movie(nuc_mov, nuc, x='bbx', y='bby')
+    nuc_movs[name].append(nuc_trackmov)
 # make global nuclei tracking movie
-globmov = concat_movies(nuc_movs['envy1'], nrows=3)
+globmov = concat_movies(nuc_movs['gfp1'], nrows=4)
+globmov = tracking_movie(movs['gfp1'], nuclei_peaks[nuclei_peaks.movie=='gfp1'])
 show_movie(globmov, 0.1, loop=True)
 
 # make summary for less clutered, single summary plot
