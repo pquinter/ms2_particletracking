@@ -4,6 +4,7 @@ For movies taken with 3 different stage positions
 run as:
     python load_movs.py dir_to_load
 where dir_to_load contains multiple directories, each with groups of 3 movies
+if multistage movie not found, try loading single movie
 """
 import numpy as np
 from im_utils import z_project
@@ -13,6 +14,7 @@ from sys import argv
 from os import mkdir, listdir
 import glob
 from tqdm import tqdm
+import warnings
 
 # load movies and save them
 
@@ -36,8 +38,16 @@ savedir = '../data/'
 for ldir in tqdm(patterns):
     # get name to save
     sdir = ldir.split('/')[-2] + '/'
-    fname = glob.glob(ldir)[0].split('/')[-1].split('_w2')[0] + '_'+ldir.split('*')[-2]
-    # create save directory
+    try:
+        fname = glob.glob(ldir)[0].split('/')[-1].split('_w2')[0] + '_'+ldir.split('*')[-2]
+    except IndexError:
+        if 's1' in ldir:
+            # probably not multi-stage movie, load single stage movie
+            ldir = ldir.split('*')[0] + '*STK'
+            fname = glob.glob(ldir)[0].split('/')[-1].split('_w2')[0]
+            warnings.warn('loading {} as a single movie'.format(ldir))
+        else: continue
+    # create save directory if it doesn't exist yet
     try: mkdir(savedir+sdir)
     except FileExistsError: pass
     saveto = savedir + sdir + fname + '.tiff'
