@@ -1,15 +1,18 @@
-from matplotlib import pyplot as plt
-%matplotlib
 import pandas as pd
 import numpy as np
-import seaborn as sns
 import skimage
 from skimage import io
-import os
-from im_utils import *
 import trackpy as tp
-from tqdm import tqdm
+
 from collections import defaultdict
+from tqdm import tqdm
+import os
+
+from im_utils import *
+
+import seaborn as sns
+from matplotlib import pyplot as plt
+%matplotlib
 
 # load z-projected movies
 movs = {}
