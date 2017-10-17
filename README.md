@@ -16,6 +16,6 @@
 Runs in `Python 3.6`
 
 #### Dependencies not included in default Anaconda installation
-*[Trackpy](http://soft-matter.github.io/trackpy/v0.3.2/installation.html)
-*[tqdm](https://pypi.python.org/pypi/tqdm)
-*[im_utils](https://github.com/pquinter/PQpython_utils)
+[Trackpy](http://soft-matter.github.io/trackpy/v0.3.2/installation.html)
+[tqdm](https://pypi.python.org/pypi/tqdm)
+[im_utils](https://github.com/pquinter/PQpython_utils)
