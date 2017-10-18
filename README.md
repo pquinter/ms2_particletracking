@@ -7,7 +7,7 @@
 
 #### Exploratory Data Analysis
 3. Generate tracking movie (`tracking_mov.py`).
-4. Align transcriptional traces, generate trace heatmaps  (`tracking_mov.py`).
+4. Align transcriptional traces, generate trace heatmaps  (`trtrace_analysis.py`).
 5. Plot nuclei fluorescence intensity properties  (`nucprops_plot.py`).
 
 #### Sandbox
