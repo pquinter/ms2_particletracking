@@ -35,35 +35,26 @@ def segment_cellnuc(im_cells, im_nuclei):
     Segment cells/nuclei
     """
     # mask projected image using adaptive threshold
-    mask_cells = mask_image(im_cells, min_size=100, block_size=101,
-                            selem=skimage.morphology.disk(10))
+    mask_cells = mask_image(im_cells, min_size=100, block_size=151,
+        selem=skimage.morphology.disk(15))
+        #im_thresh=im_cells>skimage.filters.threshold_otsu(im_cells))
     mask_nuclei = mask_image(im_nuclei, min_size=100, block_size=101,
-                            selem=skimage.morphology.disk(10))
-    # create joint cell+nuclei mask
-    joint_mask = mask_nuclei.astype('int') + mask_cells
-    # update masks to keep only cells with nuclei and viceversa
-    mask_cells = skimage.morphology.reconstruction(mask_nuclei, joint_mask)
-    mask_nuclei = mask_nuclei * mask_cells
+                selem=skimage.morphology.disk(10))
 
-    # normalize to reuse bounds that worked before
-    cells_norm = normalize_im(im_cells)
-    # get cell markers and properties, bound by area and intensity
-    cells_markers, cells_props = label_sizesel(cells_norm, mask_cells,
-                    maxint_lim, minor_ax_lim, major_ax_lim, area_lim)
-    # use the same labels for nuclei and measure region props, too
-    nuclei_markers = cells_markers * mask_nuclei
-    nuclei_props = skimage.measure.regionprops(nuclei_markers)
+    nuclei_markers = skimage.measure.label(mask_nuclei)
+    cell_markers = skimage.measure.label(mask_cells)
 
-    # enlarge markers and merge region properties by label
-    markers_enlarged, props = [], []
-    for _markers, _props in ((cells_markers, cells_props),
-                            (nuclei_markers, nuclei_props)):
-        props.append(pd.concat([regionprops2df(p) for p in _props]))
-        markers_enlarged.append(skimage.morphology.dilation(_markers,
-                selem=skimage.morphology.disk(5)))
-    props = pd.merge(*props, on='label', suffixes=('_cell','_nuc'))
+    # watershed transform using nuclei as basins, also removes cells wo nucleus
+    cell_markers = skimage.morphology.watershed(cell_markers,
+            nuclei_markers, mask=mask_cells)
+    # ensure use of same labels for nuclei
+    nuclei_markers  = mask_nuclei * cell_markers
 
-    return markers_enlarged, cells_markers, nuclei_markers, mask_cells, mask_nuclei, props
+    # enlarge cell markers to keep particles close to edge
+    cell_markers_enlarged = skimage.morphology.dilation(cell_markers,
+                selem=skimage.morphology.disk(5))
+
+    return cell_markers_enlarged, cell_markers, nuclei_markers, mask_cells, mask_nuclei
 
 fig, axes = plt.subplots(3, 3)
 axes = iter(axes.ravel())
@@ -88,21 +79,14 @@ for imname in tqdm(ims):
     fish_viz2 = skimage.exposure.equalize_hist(blurred, mask=mask_cells)
     im_viz = np.dstack((fish_viz, dapi))
 
-    # segment cells ===========================================================
+    # segment cells and nuclei ===========================================
     print('segmenting cells...')
-    cell_markers_enlarged, _cells_props, mask_cells = segment_cell(autof)
-
-    # segment nuclei ==========================================================
-    print('segmenting nuclei...')
-    nuclei_markers_enlarged, _nuclei_props, mask_nuclei = segment_cell(dapi)
-
-    (cells_markers_enlarged, nuclei_markers_enlarged), cell_markers,
-    nuclei_markers, mask_cells, mask_nuclei, props = segment_cellnuc(autof, dapi)
-
+    cell_markers_enlarged, cell_markers, nuclei_markers,\
+            mask_cells, mask_nuclei = segment_cellnuc(autof, dapi)
 
     fig, axes = plt.subplots(2, sharex=True, sharey=True)
-    axes[0].imshow(cells_markers_enlarged)
-    axes[1].imshow(nuclei_markers_enlarged)
+    axes[0].imshow(cell_markers_enlarged)
+    axes[1].imshow(nuclei_markers)
 
     # Identify peaks =========================================================
     # identify transcription particles, diameter of 3 works well
