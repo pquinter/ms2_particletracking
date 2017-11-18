@@ -25,9 +25,7 @@ for fname in tqdm(os.listdir(ddir)):
 # area and intensity limits
 maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,0.99), (15, 500), (20, 500), (500, 5000)
 
-# dictionary for time-projected mask, nuclei markers and properties
-nuclei_proj = {}
-# dataframe for transcription peaks and nuclei properties
+# dataframe for single transcript peaks
 peaks = pd.DataFrame()
 
 def segment_cellnuc(im_cells, im_nuclei):
@@ -52,7 +50,7 @@ def segment_cellnuc(im_cells, im_nuclei):
 
     # enlarge cell markers to keep particles close to edge
     cell_markers_enlarged = skimage.morphology.dilation(cell_markers,
-                selem=skimage.morphology.disk(5))
+                selem=skimage.morphology.disk(10))
 
     return cell_markers_enlarged, cell_markers, nuclei_markers, mask_cells, mask_nuclei
 
@@ -84,9 +82,9 @@ for imname in tqdm(ims):
     cell_markers_enlarged, cell_markers, nuclei_markers,\
             mask_cells, mask_nuclei = segment_cellnuc(autof, dapi)
 
-    fig, axes = plt.subplots(2, sharex=True, sharey=True)
-    axes[0].imshow(cell_markers_enlarged)
-    axes[1].imshow(nuclei_markers)
+    #fig, axes = plt.subplots(2, sharex=True, sharey=True)
+    #axes[0].imshow(cell_markers_enlarged)
+    #axes[1].imshow(nuclei_markers)
 
     # Identify peaks =========================================================
     # identify transcription particles, diameter of 3 works well
@@ -98,64 +96,23 @@ for imname in tqdm(ims):
     # from center of TSS blobs
     tssblobs = _parts[_parts.signal>120]
 
+    # Assign transcripts to cells ====================================================
+
+    # Get cell label
+    _parts['cell_label'] = _parts.apply(lambda coords:\
+            cell_markers_enlarged[int(coords.y), int(coords.x)], axis=1)
+    # Get nuclear label. This indicates whether inside nucleus or not
+    _parts['nuc_label'] = _parts.apply(lambda coords:\
+            nuclei_markers[int(coords.y), int(coords.x)], axis=1)
+    # remove peaks that are not in cells or inside nuclei
+    _parts_bk = _parts.copy()
+    _parts = _parts[(_parts.cell_label>0)&(_parts.nuc_label==0)]
+
     ax = next(axes)
     tp.annotate(_parts, fish_viz, ax=ax, imshow_style={'cmap':'viridis'})
+
+    #fig, axes = plt.subplots(2, sharex=True, sharey=True)
+    #tp.annotate(_parts_bk, fish_viz, ax=axes[0], imshow_style={'cmap':'viridis'})
+    #tp.annotate(_parts, fish_viz, ax=axes[1], imshow_style={'cmap':'viridis'})
+
     peaks = pd.concat((peaks, _parts))
-
-    # Assign transcripts to cells ====================================================
-    # Remove cells without nuclei and viceversa
-    # sum masks, cells with nuclei must now contain values of 2
-    joint_mask = mask_nuclei.astype('int')+mask_cells
-    # nuclei must be (almost) entirely contained within cells
-    # get bounding box image from joint mask
-    _nuclei_props['joint_mask'] = [joint_mask[x.bbox[0]:x.bbox[2],
-                x.bbox[1]:x.bbox[3]] for (_, x) in _nuclei_props.iterrows()]
-    # 
-
-
-
-
-
-#    # Get nuclear label
-#    _parts['label'] = _parts.apply(lambda coords:\
-#            markers_proj_enlarged[int(coords.y), int(coords.x)], axis=1)
-#    # remove peaks that are not in identified nuclei
-#    _parts = _parts[_parts.label>0]
-#    # Dataframe for movie nuclei properties
-#    _nuclei = pd.DataFrame()
-#    print('measuring nuclei properties...')
-#    for frame_no, frame in enumerate(movie):
-#        # commented lines can be used to create a frame specific mask, which is
-#        # a more correct approach, but it doesn't really change much and adds
-#        # computation time (~3s per loop)
-#        ## create frame mask
-#        #mask_f = mask_image(frame, min_size=200, block_size=101, selem=skimage.morphology.disk(10))
-#        ## use time-projected, filtered markers to mark frame mask
-#        #markers_f = mask_f * markers_proj
-#        #nuclei_f = skimage.measure.regionprops(markers_f, frame)
-#        # get nuclei for each frame based on time-proj markers
-#        nuclei_f = skimage.measure.regionprops(markers_proj, frame)
-#        # convert to dataframe and save
-#        nuclei_fdf = regionprops2df(nuclei_f)
-#        nuclei_fdf['frame'] = frame_no
-#        _nuclei = pd.concat([_nuclei, nuclei_fdf])
-#    print('{0} total nuclei for {1}'.format(len(nuclei_f), mname))
-#
-#    # Merge, label and save.
-#    # Particles can be matched to nuclei based on frame number and nuclear label
-#    _nuclei_peaks = pd.merge(_nuclei, _parts, on=['frame', 'label'])
-#    _nuclei_peaks['movie'] = mname
-#    # transform particle whole movie coordinates to nuclei bounding box coordinates
-#    _nuclei_peaks['bbx'] = _nuclei_peaks['x'] - _nuclei_peaks.bbox.apply(lambda x: x[1])
-#    _nuclei_peaks['bby'] = _nuclei_peaks['y'] - _nuclei_peaks.bbox.apply(lambda x: x[0])
-#    # get bounding box image
-#    _nuclei_peaks['bb_image'] = [movie[x.frame, x.bbox[0]:x.bbox[2],
-#                x.bbox[1]:x.bbox[3]] for (_, x) in _nuclei_peaks.iterrows()]
-#
-#    nuclei_peaks = pd.concat([nuclei_peaks, _nuclei_peaks])
-#    # save markers and time-projected properties
-#    nuclei_proj[mname] = (_nuclei_proj, markers_proj)
-#    _nuclei['movie'] = mname
-#
-## save dataframe as pickle to preserve numpy arrays
-#nuclei_peaks.to_pickle('nuclei_peaks.p')
