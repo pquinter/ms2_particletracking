@@ -1,5 +1,4 @@
-from matplotlib import pyplot as plt
-import pandas as pd
+from matplotlib import pyplot as plt import pandas as pd
 import numpy as np
 import seaborn as sns
 from sklearn.decomposition import PCA
@@ -42,7 +41,8 @@ for imname in ims:
     im_bg = skimage.filters.gaussian(fish_im, sigma=50)
     fish_im -= im_bg
     # smooth with gaussian
-    ims_smooth[imname] = skimage.filters.gaussian(fish_im)
+    #ims_smooth[imname] = skimage.filters.gaussian(fish_im, sigma=1)
+    ims_smooth[imname] = fish_im
 peaks_woTS = peaks_woTS.apply(lambda x: [normalize_im(get_bbox(x[['x','y']],
                             ims_smooth[x.imname]))], axis=1)
 # take a look at spots
@@ -51,7 +51,7 @@ fig, ax = plt.subplots(1)
 peaks_concat = concat_movies(peaks_woTS, nrows=50)[0]
 plt.imshow(peaks_concat, cmap='viridis')
 
-def sel_training(peaks_df, ims_dict, s=10, nrows=50):
+def sel_training(peaks_df, ims_dict, s=10, nrows=50, cmap='viridis'):
     """
     Manual click-selection of training set.
     Use a large screen if number of candidate objects is large!
@@ -81,14 +81,14 @@ def sel_training(peaks_df, ims_dict, s=10, nrows=50):
         Return False if too close, convenient for indexing
         """
         dimx, dimy = im.shape
-        return (coords.x>s)&(coords.x<dimx)&(coords.y>s)&(coords.y<dimy)
+        return (coords.x>s)&(coords.x+s<dimx)&(coords.y>s)&(coords.y+s<dimy)
 
     # create id first keep track of original rows
     peaks = peaks_df.copy()
     # clear peaks too close to image border
     not_inborder = peaks.apply(lambda x: check_borders(x[['x','y']],
                                             ims_dict[x.imname], s), axis=1)
-    peaks = peaks[not_inborder]
+    peaks = peaks.loc[not_inborder]
     peaks['uid'] = np.arange(len(peaks))
     # get s by s squares containing spots
     peaks_ims = peaks.apply(lambda x: [normalize_im(get_bbox(x[['x','y']],
@@ -106,10 +106,11 @@ def sel_training(peaks_df, ims_dict, s=10, nrows=50):
     labels = concat_movies(labels, nrows=nrows)[0]
     # display for click selection
     fig, ax = plt.subplots(1, figsize=(25.6, 13.6))
-    ax.imshow(peaks_imsconcat, cmap='viridis')# array of frames for visual sel
+    ax.set_title('click to select; ctrl+click to undo last click; alt+click to finish')
+    ax.imshow(peaks_imsconcat, cmap=cmap)# array of frames for visual sel
     ax.imshow(labels, alpha=0.0)# overlay array of squares with invisible labels
     # yticks for guidance, take into account padding
-    ax.set_yticks(np.arange(14, nrows*14.2, 10))
+    ax.set_yticks(np.arange(s+4, nrows*1.1*s+4, 10))
     plt.tight_layout()
     # get labels by click
     coords = plt.ginput(10000, timeout=0, show_clicks=True)
@@ -117,26 +118,62 @@ def sel_training(peaks_df, ims_dict, s=10, nrows=50):
     if len(coords)>0:
         # filter selected labels
         selected = {labels[int(c1), int(c2)] for (c2, c1) in coords}
-        # get boolean array of selected for indexing original df
-        sel_bool = peaks.uid.isin(selected).values
-        # get selected images, without padding nor normalizing. Need to fetch originals again
-        peaks_ims = peaks.apply(lambda x: [get_bbox(x[['x','y']],
-                        ims_dict[x.imname], s, pad=False)], axis=1)
-        all_ims  = np.stack([i[0] for i in peaks_ims])
-        return sel_bool, all_ims
-    else: return None, None
+    else: selected = []
+    # get boolean array of selected for indexing original df
+    sel_bool = peaks.uid.isin(selected).values
+    # get selected images, without padding nor normalizing. Need to fetch originals again
+    peaks_ims = peaks.apply(lambda x: [get_bbox(x[['x','y']],
+                    ims_dict[x.imname], s, pad=False)], axis=1)
+    all_ims  = np.stack([i[0] for i in peaks_ims])
+    return sel_bool, all_ims
 # do manual selection of training set from pre-selected candidate peaks
 peaks = pd.read_csv('../output/111617_TL47PP7smFish.csv')
-sel_ind, ims_training = sel_training(peaks, ims_smooth, nrows=50)
+#sel_ind, ims_training = sel_training(peaks, ims_smooth, nrows=50)
 
-#peaks_woTS['manual_sel'] = sel_ind
+peaks = pd.read_csv('../output/spot_trainingset/111617_TL47PP7smFish_SpotManualSel.csv')
+peaks['uid'] = np.arange(len(peaks))
+peaks_ts = peaks[(peaks.manual_sel==1)&(peaks.signal>120)]
+sel_ind_ts, ims_training_ts = sel_training(peaks_ts, ims_smooth, s=25, nrows=10, cmap='gist_stern')
+peaks_ts['TS'] = np.logical_not(sel_ind_ts)
+peaks.loc[peaks.uid.isin(peaks_ts[peaks_ts.TS==1].uid), 'manual_sel'] = 'TS'
+peaks.loc[peaks.manual_sel==1, 'manual_sel'] = 'mrna'
+peaks.loc[peaks.manual_sel==0, 'manual_sel'] = 'crap'
+
+mrna = peaks[(peaks.manual_sel=='mrna')]
+not_inborder = mrna.apply(lambda x: check_borders(x[['x','y']],
+                                        ims_smooth[x.imname], 10), axis=1)
+mrna = mrna.loc[not_inborder]
+sel_ind_r, ims_training_r = sel_training(mrna, ims_smooth, s=10, nrows=30, cmap='viridis')
+peaks.loc[peaks.uid.isin(crap[sel_ind_r].uid), 'manual_sel'] = 'mrna'
+io.imshow(im_block(ims_training[(peaks.manual_sel=='crap')], 50, norm=1), cmap='viridis')
+io.imshow(im_block(ims_training_r[sel_ind_r], 10, norm=1), cmap='viridis')
+io.imshow(np.hstack(normalize(ims_training_r[sel_ind_r])), cmap='viridis')
+
+# clear peaks near border, done inside sel_training
+peaks = peaks[peaks.apply(lambda x: check_borders(x[['x','y']],
+                                        ims_dict[x.imname], s), axis=1)]
+# now can add label
+peaks['manual_sel'] = sel_ind
+peaks.to_csv('../output/spot_trainingset/111617_TL47PP7smFish_SpotManualSel.csv', index=False)
+# look at distribution of intensities
+plt.figure()
+plot_ecdf(peaks[(peaks.manual_sel=='mrna')].mass.values, 0)
+plot_ecdf(peaks[(peaks.manual_sel=='TS')].mass.values, 0)
+plot_ecdf(peaks[(peaks.manual_sel==1)&(peaks.TS==1)].mass.values, 0)
+plot_ecdf(peaks[(peaks.manual_sel==1)&(peaks.signal>120)].mass.values, 0)
+sns.distplot(peaks[(peaks.manual_sel==1)].mass.values)
+# There are clearly two distributions here,
+# probably single transcripts and more than one
+
+
+
 #peaks_woTS.to_csv('../output/spot_trainingset/111617_TL47PP7smFish_SpotManualSel.csv', index=False)
 peaks_woTS = pd.read_csv('../output/spot_trainingset/111617_TL47PP7smFish_SpotManualSel.csv')
 peaks_sel = peaks_woTS[peaks_woTS.manual_sel==0]
 
 # pickle all images and labels
 with open('../output/spot_trainingset/111617_TL47PP7smFish_Training_Labels_ImsSmoothMinusBkUnnorm.pkl', 'wb') as f:
-    pickle.dump(sel_ind, f)
+    pickle.dump(peaks.manual_sel.values, f)
     pickle.dump(ims_training, f)
 
 # unpack series of lists into array, clear all those empty (because close to
@@ -152,8 +189,8 @@ ims_training = np.stack([i[0] for i in peaks_woTS])
 #############################################################################
 # PCA
 #############################################################################
-
-spots_ims = ims_training#[sel_ind]
+sel_ind = peaks.manual_sel=='mrna'
+spots_ims = ims_training#[peaks.manual_sel=='mrna']
 spots_ims = np.stack([np.ravel(i) for i in spots_ims])
 # also remove it in peaks DF
 #peaks.drop(889, inplace=True)
@@ -187,17 +224,17 @@ for i, ax in enumerate(axes):
     plt.legend()
 # Spots may be linearly separable, PCs 2 and 3 seem specially useful
 fig, axes = plt.subplots(1)
-axes.scatter(spots_ims_pca.T[2][~sel_ind], spots_ims_pca.T[1][~sel_ind], c='b', label='not sel', alpha=0.3)
-axes.scatter(spots_ims_pca.T[2][sel_ind], spots_ims_pca.T[1][sel_ind], c='r', label='sel', alpha=0.3)
+axes.scatter(spots_ims_pca.T[1][~sel_ind], spots_ims_pca.T[2][~sel_ind], c='b', label='not sel', alpha=0.3)
+axes.scatter(spots_ims_pca.T[1][sel_ind], spots_ims_pca.T[2][sel_ind], c='r', label='sel', alpha=0.3)
 plt.legend()
 
 
-spots_ims_tsne = TSNE(n_components=2).fit_transform(spots_ims)
-# drop first PC
-#spots_ims_pca = spots_ims_pca.T[1:]
-# add dimensions to peaks df
-for d in range(n_components):
-    peaks_woTS_df['pca_{0}'.format(d)] = spots_ims_pca.T[d]
+spots_ims_tsne = TSNE(n_components=10).fit_transform(spots_ims)
+fig, axes = plt.subplots(1)
+axes.scatter(spots_ims_tsne.T[2][~sel_ind], spots_ims_tsne.T[1][~sel_ind], c='b', label='not sel', alpha=0.3)
+axes.scatter(spots_ims_tsne.T[2][sel_ind], spots_ims_tsne.T[1][sel_ind], c='r', label='sel', alpha=0.3)
+plt.legend()
+
 
 ################################################################################
 # Try SVM classification
@@ -210,7 +247,8 @@ from sklearn.utils.extmath import fast_dot
 with open('../output/spot_trainingset/111617_TL47PP7smFish_Training_Labels_ImsSmoothMinusBkUnnorm.pkl', 'rb') as f:
     spot_labels = pickle.load(f)
     spot_ims = pickle.load(f)
-# ravel images
+# Each image must not be normalized independently! Int is important for finding TS
+# Ravel images.
 spot_ims = np.stack([np.ravel(i) for i in spot_ims])
 # split into a training and testing set
 spot_train, spot_test, labels_train, labels_test = \
@@ -257,7 +295,7 @@ label_true_miscl = labels_test[miscl]
 label_pred_miscl = labels_pred[miscl]
 labels_cl = ['True:{0}; Pred:{1}'.format(str(l1),str(l2)) for (l1, l2) in zip(label_true_miscl, label_pred_miscl)]
 plt.figure()
-plot_gallery(spot_miscl, labels_cl, 10, 10, 7, 9)
+plot_gallery(spot_miscl, labels_cl, 10, 10, 8, 16)
 
 # get indices to randomly look at our predictions
 rows, cols = 10, 29
