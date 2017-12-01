@@ -41,7 +41,7 @@ for imname in ims:
     im_bg = skimage.filters.gaussian(fish_im, sigma=50)
     fish_im -= im_bg
     # smooth with gaussian
-    #ims_smooth[imname] = skimage.filters.gaussian(fish_im, sigma=1)
+    fish_im = skimage.filters.gaussian(fish_im, sigma=1)
     ims_smooth[imname] = fish_im
 peaks_woTS = peaks_woTS.apply(lambda x: [normalize_im(get_bbox(x[['x','y']],
                             ims_smooth[x.imname]))], axis=1)
@@ -110,7 +110,7 @@ def sel_training(peaks_df, ims_dict, s=10, nrows=50, cmap='viridis'):
     ax.imshow(peaks_imsconcat, cmap=cmap)# array of frames for visual sel
     ax.imshow(labels, alpha=0.0)# overlay array of squares with invisible labels
     # yticks for guidance, take into account padding
-    ax.set_yticks(np.arange(s+4, nrows*1.1*s+4, 10))
+    ax.set_yticks(np.arange(s+4, nrows*1.1*(s+4), 10))
     plt.tight_layout()
     # get labels by click
     coords = plt.ginput(10000, timeout=0, show_clicks=True)
@@ -139,11 +139,53 @@ peaks.loc[peaks.uid.isin(peaks_ts[peaks_ts.TS==1].uid), 'manual_sel'] = 'TS'
 peaks.loc[peaks.manual_sel==1, 'manual_sel'] = 'mrna'
 peaks.loc[peaks.manual_sel==0, 'manual_sel'] = 'crap'
 
-mrna = peaks[(peaks.manual_sel=='mrna')]
-not_inborder = mrna.apply(lambda x: check_borders(x[['x','y']],
+not_inborder = peaks.apply(lambda x: check_borders(x[['x','y']],
                                         ims_smooth[x.imname], 10), axis=1)
-mrna = mrna.loc[not_inborder]
-sel_ind_r, ims_training_r = sel_training(mrna, ims_smooth, s=10, nrows=30, cmap='viridis')
+peaks = peaks[not_inborder]
+peaks_r = peaks[peaks.manual_sel=='crap']
+
+ind_r = []
+ims_r = []
+step = 400
+for n in np.arange(step, len(peaks_r), step):
+    if n > len(peaks_r) - step:
+        ind_, ims_= sel_training(peaks_r[n:], ims_smooth, s=10, nrows=15, cmap='viridis')
+    else:
+        ind_, ims_= sel_training(peaks_r[n-step:n], ims_smooth, s=10, nrows=15, cmap='viridis')
+    ind_r.append(ind_)
+    ims_r.append(ims_)
+
+
+ind_, ims_= sel_training(peaks_r[0:step], ims_smooth, s=5, nrows=15, cmap='gist_stern')
+
+#ims_r_all = mrna.apply(lambda x: [get_bbox(x[['x','y']],
+#                ims_smooth[x.imname], 10, pad=False)], axis=1)
+ims_r_all  = np.stack([i[0] for i in ims_r_all ])
+ind_r_all = np.concatenate(ind_)
+ims_r_all = np.concatenate(ims_)
+
+#update peaks after 4 revs
+# reset mrna selection
+peaks['manual_sel'] = peaks.manual_sel.str.replace('mrna','crap')
+peaks.loc[peaks.uid.isin(mrna4[mrna4.rev3==True].uid), 'manual_sel'] = 'mrna'
+
+with open('../output/spot_trainingset/lauren_sel_mrna.pkl', 'wb') as f:
+    pickle.dump(ind_lauren_all, f)
+    pickle.dump(ims_lauren_all, f)
+
+io.imshow(im_block(ims_lauren_all[ind_lauren_all], 20, norm=1), cmap='viridis')
+io.imshow(im_block(ims_lauren_all[~ind_lauren_all], 50, norm=1), cmap='viridis')
+
+io.imshow(im_block(ims_training[peaks.manual_sel=='mrna'], 50, norm=1), cmap='gray')
+plt.figure()
+io.imshow(im_block(ims_training[(peaks.manual_sel=='crap')], 75, norm=1), cmap='viridis')
+io.imshow(im_block(ims_training[spot_labels=='mrna'], 75, norm=1), cmap='viridis')
+
+io.imshow(im_block(ims_training[peaks[peaks.sort_values('nuc_label').manual_sel=='crap'].index], 75, norm=1), cmap='gray')
+io.imshow(im_block(ims_training[peaks[peaks.sort_values('raw_mass').manual_sel=='mrna'].index], 50, norm=0), cmap='viridis')
+
+
+
 peaks.loc[peaks.uid.isin(crap[sel_ind_r].uid), 'manual_sel'] = 'mrna'
 io.imshow(im_block(ims_training[(peaks.manual_sel=='crap')], 50, norm=1), cmap='viridis')
 io.imshow(im_block(ims_training_r[sel_ind_r], 10, norm=1), cmap='viridis')
@@ -157,7 +199,7 @@ peaks['manual_sel'] = sel_ind
 peaks.to_csv('../output/spot_trainingset/111617_TL47PP7smFish_SpotManualSel.csv', index=False)
 # look at distribution of intensities
 plt.figure()
-plot_ecdf(peaks[(peaks.manual_sel=='mrna')].mass.values, 0)
+plot_ecdf(peaks[(peaks.manual_sel=='crap')].mass.values, 0)
 plot_ecdf(peaks[(peaks.manual_sel=='TS')].mass.values, 0)
 plot_ecdf(peaks[(peaks.manual_sel==1)&(peaks.TS==1)].mass.values, 0)
 plot_ecdf(peaks[(peaks.manual_sel==1)&(peaks.signal>120)].mass.values, 0)
@@ -178,7 +220,7 @@ with open('../output/spot_trainingset/111617_TL47PP7smFish_Training_Labels_ImsSm
 
 # unpack series of lists into array, clear all those empty (because close to
 # edge, need to fix this)
-#spots_ims = peaks_woTS.copy()
+#spot_ims = peaks_woTS.copy()
 not_inborder = peaks_woTS.apply(lambda x: check_borders(x[['x','y']],
                                             ims_smooth[x.imname], 10), axis=1)
 peaks_woTS = peaks_woTS[not_inborder]
@@ -189,27 +231,29 @@ ims_training = np.stack([i[0] for i in peaks_woTS])
 #############################################################################
 # PCA
 #############################################################################
-sel_ind = peaks.manual_sel=='mrna'
-spots_ims = ims_training#[peaks.manual_sel=='mrna']
-spots_ims = np.stack([np.ravel(i) for i in spots_ims])
+sel_ind = peaks.manual_sel=='crap'
+spot_ims = ims_training.copy()
+
+
+spot_ims = np.stack([np.ravel(i) for i in spot_ims])
 # also remove it in peaks DF
 #peaks.drop(889, inplace=True)
-#spots_ims = sklearn.preprocessing.StandardScaler().fit_transform(spots_ims)
+#spot_ims = sklearn.preprocessing.StandardScaler().fit_transform(spot_ims)
 # 10% of dimensions, height and width
 n_components, h, w = 10, 10, 10
 # apply dimensionality reduction
 pca = PCA(n_components=n_components, svd_solver='randomized',
-          whiten=True).fit(spots_ims)
+          whiten=True).fit(spot_ims)
 # compute cumulative sum of explained variance ratios
 # 2 dimensions gets ~91% var
 cum_exp_var = np.cumsum(pca.explained_variance_ratio_)
 plt.plot(cum_exp_var)
-spots_ims_pca = pca.transform(spots_ims)
+spot_ims_pca = pca.transform(spot_ims)
 # get total intensities per frame to check corr with PCA
-ints = [np.sum(i) for i in spots_ims]
+ints = [np.sum(i) for i in spot_ims]
 # first pca has 0.99 pearson corr with intensity, not very useful; drop it
 # Second PCA seems to be uncorrelated
-np.corrcoef(ints, spots_ims_pca.T[0])
+np.corrcoef(ints, spot_ims_pca.T[0])
 # get the eigenfaces
 eigenfaces = pca.components_.reshape((n_components, h, w))
 # number them for plot
@@ -219,20 +263,20 @@ plot_gallery(eigenfaces, 2, 5)
 fig, axes = plt.subplots(3, 3)
 axes = iter(axes.ravel())
 for i, ax in enumerate(axes):
-    ax.plot(*ecdf(spots_ims_pca.T[i][sel_ind], conventional=True), label='sel')
-    ax.plot(*ecdf(spots_ims_pca.T[i][~sel_ind], conventional=True), label='not_sel')
+    ax.plot(*ecdf(spot_ims_pca.T[i][sel_ind], conventional=True), label='sel')
+    ax.plot(*ecdf(spot_ims_pca.T[i][~sel_ind], conventional=True), label='not_sel')
     plt.legend()
 # Spots may be linearly separable, PCs 2 and 3 seem specially useful
 fig, axes = plt.subplots(1)
-axes.scatter(spots_ims_pca.T[1][~sel_ind], spots_ims_pca.T[2][~sel_ind], c='b', label='not sel', alpha=0.3)
-axes.scatter(spots_ims_pca.T[1][sel_ind], spots_ims_pca.T[2][sel_ind], c='r', label='sel', alpha=0.3)
+axes.scatter(spot_ims_pca.T[0][~sel_ind], spot_ims_pca.T[2][~sel_ind], c='b', label='not sel', alpha=0.3)
+axes.scatter(spot_ims_pca.T[0][sel_ind], spot_ims_pca.T[2][sel_ind], c='r', label='sel', alpha=0.3)
 plt.legend()
 
 
-spots_ims_tsne = TSNE(n_components=10).fit_transform(spots_ims)
+spot_ims_tsne = TSNE(n_components=10).fit_transform(spot_ims)
 fig, axes = plt.subplots(1)
-axes.scatter(spots_ims_tsne.T[2][~sel_ind], spots_ims_tsne.T[1][~sel_ind], c='b', label='not sel', alpha=0.3)
-axes.scatter(spots_ims_tsne.T[2][sel_ind], spots_ims_tsne.T[1][sel_ind], c='r', label='sel', alpha=0.3)
+axes.scatter(spot_ims_tsne.T[2][~sel_ind], spot_ims_tsne.T[1][~sel_ind], c='b', label='not sel', alpha=0.3)
+axes.scatter(spot_ims_tsne.T[2][sel_ind], spot_ims_tsne.T[1][sel_ind], c='r', label='sel', alpha=0.3)
 plt.legend()
 
 
@@ -288,12 +332,17 @@ The best parameters are {'C': 100000.0, 'gamma': 1.0} with a score of 0.93
 
 avg / total       0.93      0.93      0.93       930
 """
+# save classifier
+with open('../output/spot_trainingset/clf_beta0.pkl', 'wb') as f:
+    pickle.dump(clf, f)
+
+
 # get misclassified
 miscl = labels_pred!=labels_test
 spot_miscl = normalize(spot_test[miscl])
 label_true_miscl = labels_test[miscl]
 label_pred_miscl = labels_pred[miscl]
-labels_cl = ['True:{0}; Pred:{1}'.format(str(l1),str(l2)) for (l1, l2) in zip(label_true_miscl, label_pred_miscl)]
+labels_cl = ['True:{0}'.format(str(l1),str(l2)) for (l1, l2) in zip(label_true_miscl, label_pred_miscl)]
 plt.figure()
 plot_gallery(spot_miscl, labels_cl, 10, 10, 8, 16)
 

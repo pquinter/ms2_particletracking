@@ -60,9 +60,12 @@ spot_df = spot_df[~spot_df.imname.isin(('67f1FISHGal10PP7_s13', '664FISHGal10PP7
 spot_df['cellid'] = spot_df['imname'] + spot_df.cell_label.apply(str)
 transcripts_bycell = spot_df[spot_df.svm_label=='mrna'].groupby('cellid').x.count().reset_index()
 transcripts_bycell['strain']  = transcripts_bycell.cellid.apply(lambda x: x.split('FISH')[0])
+c = iter(sns.color_palette("Set2", 10))
 for name, group in transcripts_bycell.groupby('strain'):
     _median, _mean = np.median(group.x), np.mean(group.x)
-    plot_ecdf(group.x, label='{0} median: {1:.2f} mean: {2:.2f}'.format(name, _median, _mean), formal=1)
+    label = '{0} median: {1:.2f} mean: {2:.2f}'.format(name, _median, _mean)
+    plt.plot(*ecdf(group.x, conventional=True), c=next(c), label=label)
+    ax.set_title(label)
 plt.legend()
 
 # TS int
@@ -73,7 +76,8 @@ for name, group in TS_certain.groupby('strain'):
 plt.legend()
 
 # Distribution of mrna int by sample
-for name, group in spot_df[spot_df.svm_label=='mrna'].groupby('imname'):
+for name, group in spot_df[spot_df.svm_label=='TS'].groupby('imname'):
+    if '68' in name: continue
     _median, _mean = np.median(group.mass), np.mean(group.mass)
     label = '{0} median: {1:.2f} mean: {2:.2f}'.format(name, _median, _mean)
     print(label)
