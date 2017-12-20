@@ -3,9 +3,11 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 
-def plot_hmap(hmap, drop='movie', save=False):
+def plot_hmap(hmap, drop='movie', save=False, normtrace=True):
     try: hmap = hmap.drop(drop, axis=1)
     except ValueError: pass
+    if normtrace:
+        hmap = hmap.apply(lambda x: (x - np.min(x)) / (np.max(x) - np.min(x)), axis=1)
     fig = plt.figure(figsize=(16, 10))
     sns.heatmap(hmap,xticklabels=5, yticklabels=False, cmap='viridis',
             robust=True)
@@ -36,20 +38,20 @@ def align_trace(trace, interpolate=np.mean):
     return trace_aligned
 
 # load nuclei and particle tracking data
-nuclei_peaks = pd.read_pickle('../output/GFPEnvyScar/nuclei_peaks.p')
+nuclei_peaks = pd.read_pickle('../output/pp27/pp7spots_SVMfiltered.pkl')
 
 # create mass heatmap
 hmap = pd.DataFrame()
 movcount = defaultdict(int)
-for name, group in nuclei_peaks.groupby('movie'):
+for name, group in nuclei_peaks.groupby('imname'):
     h = tp.filter_stubs(group, 5)
-    h = h[['mass','frame', 'particle']].pivot(index='particle', columns='frame')
+    h = group[['mass','frame', 'particle']].pivot(index='particle', columns='frame')
     h['movie'] = name
     hmap = pd.concat((hmap, h), axis=0)
     movcount[name]+=h.shape[0]
 # convert frame numbers to time in seconds, last column is movie name
 hmap.columns = list(np.arange(20, 20*hmap.shape[1], 20)) + ['movie']
-plot_hmap(hmap)
+plot_hmap(hmap, normtrace=True)
 
 # Align traces to the left
 hmap_aligned = hmap.drop('movie', axis=1).apply(lambda x: align_trace(x,
@@ -61,4 +63,4 @@ peaks_tidy = pd.melt(hmap_aligned)
 peaks_tidy['movie'] = list(hmap['movie'])*hmap_aligned.shape[1]
 peaks_tidy.columns = ['time', 'intensity', 'movie']
 sns.tsplot(time='time', value='intensity', condition='movie', data=peaks_tidy,
-            estimator=np.nanmean, ci=68, n_boot=1e4)
+            estimator=np.nanmean, ci=68, n_boot=1e2)
