@@ -5,6 +5,7 @@ from collections import defaultdict
 
 # load nuclei and particle tracking data
 nuclei_peaks = pd.read_pickle('../output/GFPEnvyScar/nuclei_peaks.p')
+nuclei_peaks = pd.read_pickle('../output/pp7/pp7spots_SVMfiltered_20171219.pkl')
 
 # load z-projected movies to make tracking movie
 movs = {}
@@ -16,8 +17,9 @@ for fname in tqdm(os.listdir(ddir)):
 
 # get tracking movies of all nuclei for visualization
 nuc_movs = defaultdict(list)
-show_wholemov=True #whether to show whole movie or just frames with id peaks
-for (name, label), nuc in nuclei_peaks.groupby(['movie', 'label']):
+show_wholemov=True #show whole movie or just frames with id peaks
+norm=True#normalize each frame to improve viz
+for (name, label), nuc in nuclei_peaks.groupby(['imname', 'label']):
     if show_wholemov:
         # get whole movie from original
         b = nuc.bbox.iloc[0] # bounding box coordinates are the same for all frames
@@ -29,9 +31,28 @@ for (name, label), nuc in nuclei_peaks.groupby(['movie', 'label']):
     nuc_trackmov = tracking_movie(nuc_mov, nuc, x='bbx', y='bby')
     nuc_movs[name].append(nuc_trackmov)
 
+# Movie by particle instead of nucleus
+nuc_movs = defaultdict(list)
+show_wholemov=True #show whole movie or just frames with id peaks
+norm=True#normalize each frame to improve viz
+for (name, pid), nuc in nuclei_peaks.groupby(['imname', 'pid']):
+    # get single set of bounding box coordinates for whole movie
+    bx, by = get_bbox(nuc[['x','y']].iloc[0], size=50, return_im=False) # bounding box coordinates are the same for all frames
+    nuc_mov = movs[name][:, bx, by]
+    # transform particle whole movie coordinates to bounding box coordinates
+    _coords = pd.DataFrame()
+    _coords['frame'] = nuc.frame
+    _coords['_bbx'] = nuc['x'] - by.start
+    _coords['_bby'] = nuc['y'] - bx.start
+    nuc_trackmov = tracking_movie(nuc_mov, _coords, x='_bbx', y='_bby')
+    nuc_movs[name].append(nuc_trackmov)
+
 # make global nuclei tracking movie for easier visualization and save
 for m in nuc_movs:
-    globmov = concat_movies(nuc_movs[m], nrows=4)
-    io.imsave('../output/movies/{}.tif'.format(m), globmov)
+    _movs = nuc_movs[m]
+    if norm:
+        _movs = [skimage.img_as_uint(normalize(_movs[i])) for i in range(len(_movs))]
+    globmov = concat_movies(_movs, nrows=4)
+    io.imsave('../output/pp7/tracking_movs_classif/movie_bypid_{}.tif'.format(m), globmov)
 # visualize movie, probably better in .tif using fiji
-#show_movie(globmov, 0.1, loop=True)
+show_movie(globmov, 0.1, loop=True)
