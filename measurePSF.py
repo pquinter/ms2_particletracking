@@ -97,7 +97,7 @@ def neg_log_post_gauss3d(p, X, y, p_range):
 
 # Regression by Optimization ==================================================
 
-def imstack_gauss3d_regress(imstack, p0, p_range):
+def imstack_gauss3d_regress(imstack, p0, p_range=None, leastsq=False):
     """
     Fit a 3D stack of images to a gaussian function by optimization
 
@@ -125,7 +125,9 @@ def imstack_gauss3d_regress(imstack, p0, p_range):
     fluor_int = imstack.ravel()
 
     # Least of squares regression on residuals
-    #popt3d, _ = scipy.optimize.leastsq(resid3d, p0, args=(X, fluor_int))
+    if leastsq:
+        popt3d, _ = scipy.optimize.leastsq(resid3d, p0, args=(X, fluor_int))
+        return popt3d
     args = (X, fluor_int, p_range)
     # Compute the MAP
     popt = scipy.optimize.minimize(neg_log_post_gauss3d, p0,
@@ -245,9 +247,13 @@ def checkGaussFit3d(bead_im, X, popt3d):
     # Plot projection of 3d fit
     fig, axes = plt.subplots(2,2, sharex=True, sharey=True)
     axes[0,0].imshow(z_project(fit3d)) #xy
+    axes[0,0].set_title('fit xy')
     axes[0,1].imshow(z_project(bead_im)) #xy
+    axes[0,1].set_title('raw xy')
     axes[1,0].imshow(z_project(fit3d.T)) #yz
-    axes[1,1].imshow(z_project(bead_im)) #xy
+    axes[1,0].set_title('fit yz')
+    axes[1,1].imshow(z_project(bead_im.T)) #xy
+    axes[1,1].set_title('raw yz')
 
     # Now look at fit in one dimension, just sanity check
     # array for plotting
@@ -263,7 +269,7 @@ def checkGaussFit3d(bead_im, X, popt3d):
     for i, (c_, b_, d) in enumerate(((cx, bx, x), (cy, by, y), (cz, bz, z))):
         axes[i].plot(xx, gauss1d(xx, (r, a, b_, c_)))
         axes[i].plot(np.linspace(0, len(d)-1, len(d)), d, '.')
-        axes[i].axvspan(b_-FWHMxyz[i]/2, b_+FWHMxyz[i]/2, facecolor='k', alpha=0.1)
+        #axes[i].axvspan(b_-FWHMxyz[i]/2, b_+FWHMxyz[i]/2, facecolor='k', alpha=0.1)
     return None
 
 checkGaussFit3d(bead_im, X, popt3d)
