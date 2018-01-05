@@ -97,7 +97,7 @@ def neg_log_post_gauss3d(p, X, y, p_range):
 
 # Regression by Optimization ==================================================
 
-def imstack_gauss3d_regress(imstack, p0, p_range=None, leastsq=False):
+def imstack_gauss3d_regress(imstack, p0, p_range=None, return_err=True, leastsq=False):
     """
     Fit a 3D stack of images to a gaussian function by optimization
 
@@ -132,11 +132,13 @@ def imstack_gauss3d_regress(imstack, p0, p_range=None, leastsq=False):
     # Compute the MAP
     popt = scipy.optimize.minimize(neg_log_post_gauss3d, p0,
                                         args=args, method='powell').x
-
-    hes = smnd.approx_hess(popt, log_marg_post_gauss3d, args=args)
-    # Compute the covariance matrix and get error bars on params
-    errbars = np.sqrt(np.diag(-np.linalg.inv(hes)))
-    return popt, errbars
+    if return_err:
+        hes = smnd.approx_hess(popt, log_marg_post_gauss3d, args=args)
+        # Compute the covariance matrix and get error bars on params
+        errbars = np.sqrt(np.diag(-np.linalg.inv(hes)))
+        return popt, errbars
+    else:
+        return popt
 
 # Params are: r, a, bx, by, bz, cx, cy, cz
 # Initial guesses for regression. Center is roughly center of image.
