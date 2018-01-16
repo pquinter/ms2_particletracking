@@ -19,32 +19,70 @@ from matplotlib import pyplot as plt
 %matplotlib
 
 
-def segment_cellnuc(im_cells, im_nuclei):
+def segment_sel_nuc(im_nuclei, imname):
     """
-    Segment cells/nuclei
+    Segment cells/nuclei and manually classify
     """
-    thresh_im_cells = im_cells>skimage.filters.threshold_otsu(im_cells)
-    thresh_im_nuclei = im_nuclei>skimage.filters.threshold_otsu(im_nuclei)
-    # mask projected image using adaptive threshold
-    mask_cells = mask_image(im_cells, min_size=1000, block_size=151,
-        selem=skimage.morphology.disk(15))
-        #im_thresh=im_cells>skimage.filters.threshold_otsu(im_cells))
+    # mask projected image using adaptive threshold and create markers
     mask_nuclei = mask_image(im_nuclei, min_size=100, block_size=101,
                 selem=skimage.morphology.disk(10))
-
     nuclei_markers = skimage.measure.label(mask_nuclei)
-    cell_markers = skimage.measure.label(mask_cells)
 
+    # Classification of segmented nuclei ======================================
+    # get centroids (so all bbox are same size). Dapi is most visible.
+    seg_coords = pd.DataFrame([i.centroid for i in\
+        skimage.measure.regionprops(nuclei_markers, im_nuclei)], columns=['y','x'])
+    # add image name for sel_training func
+    seg_coords['imname'] = imname
+    # make a segmentation image of raw + scaled masks (eq to ~0.3 alpha)
+    alpha = np.mean(im_nuclei)/np.mean(mask_cells)*0.0025
+    seg_im = im_nuclei + (mask_cells + mask_nuclei.astype(int))*alpha
+    # select bad images (usually more good than bad)
+    _sel_seg, _seg_ims, _seg_coords = sel_training(seg_coords, {imname: seg_im},
+                        s=50, ncols=len(seg_coords)//3, figsize=(25.6, 13.6))
+    # remove selected markers. Index is original markers, in case some were
+    # removed in sel_training because of border proximity
+    # First element of array is background (0)
+    for l in _seg_coords[_sel_seg].index.values+1:
+        nuclei_markers[np.where(np.isclose(nuclei_markers,l))] = 0
+    # add selection array to df to be pragmatic
+    _seg_coords['is_nucleus'] = ~_sel_seg
+
+    return nuclei_markers, _seg_ims, _seg_coords
+
+def segment_cellfromnuc(im_cells, nuclei_markers):
+    """
+    Segment cells using labeled nuclei markers
+
+    Arguments
+    ---------
+    im_cells: array
+        image of cells
+    nuclei_markers: array
+        integer labeled image of nuclei markers
+
+    Returns
+    ---------
+    cell_markers_enlarged: array
+        dilated cell markers; useful to catch things close to cell edge
+    cell_markers, nuclei_markers: array
+        only cells with nuclei and nuclei with cells
+    mask_cells, mask_nuclei: boolean array
+        boolean masks
+    """
+
+    mask_cells = mask_image(im_cells, min_size=1000, block_size=151,
+        selem=skimage.morphology.disk(15))
+    cell_markers = skimage.measure.label(mask_cells)
     # watershed transform using nuclei as basins, also removes cells wo nucleus
     cell_markers = skimage.morphology.watershed(cell_markers,
             nuclei_markers, mask=mask_cells)
-    # update masks
+    # update masks; keeps only cells with nucleus and viceversa
     mask_cells = cell_markers>0
-    mask_nuclei = mask_nuclei * mask_cells
+    mask_nuclei = nuclei_markers>0 * mask_cells
 
     # ensure use of same labels for nuclei
     nuclei_markers  = mask_nuclei * cell_markers
-
 
     # enlarge cell markers to keep particles close to edge
     cell_markers_enlarged = skimage.morphology.dilation(cell_markers,
@@ -59,14 +97,15 @@ ims_stack = load_ims(rrdir+'zstacks/', 'STK')
 # area and intensity limits
 maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,0.99), (15, 500), (20, 500), (500, 5000)
 # try it on a sample
-#sample = ['681FISHGal10PP7_s5','67f1FISHGal10PP7_s9','TL47FISHGal10PP7_s7','664FISHGal10PP7_s3']
+#sample = ['666FISHGal10PP7_s10', '666FISHGal10PP7_s9']
 
 cellnums, imnames = [], []
 # dataframe for single transcript peaks
 peaks = pd.DataFrame()
+seg_coords, seg_ims = pd.DataFrame(), ''
 for imname in tqdm(ims_stack):
 #for imname in tqdm(sample):
-
+    #if imname in imnames: continue
     # get three-channel z-projected image
     print('analyzing {}'.format(imname))
     im = ims_projected[imname]
@@ -83,14 +122,26 @@ for imname in tqdm(ims_stack):
 
     # segment cells and nuclei ===========================================
     print('segmenting cells...')
+    nuclei_markers, _seg_ims, _seg_coords = segment_sel_nuc(dapi, imname)
     cell_markers_enlarged, cell_markers, nuclei_markers,\
-            mask_cells, mask_nuclei = segment_cellnuc(autof, dapi)
-    segmented_im = cell_markers_enlarged+mask_nuclei
+            mask_cells, mask_nuclei = segment_cellfromnuc(autof, nuclei_markers)
+    segmented_im = cell_markers_enlarged + mask_nuclei
     io.imsave('../output/segmentation/{}_segmentation.tif'.format(imname),
-            skimage.img_as_int(segmented_im))
-    cellnums.append(len(np.unique(cell_markers)))
+                                        skimage.img_as_int(segmented_im))
+    # save selection history
+    seg_coords = pd.concat((seg_coords, _seg_coords))
+    try:
+        seg_ims = np.concatenate((seg_ims, _seg_ims))
+    except ValueError:
+        seg_ims = _seg_ims
+    assert len(seg_ims) == len(seg_coords)
+
+    cellnums.append(len(np.unique(cell_markers)[1:]))
     imnames.append(imname)
 
+
+    # TODO: move this to before watershed so as only to keep cells with real
+    # nuclei
     # Identify peaks =========================================================
     # identify transcription particles, diameter of 3 works well
     # this params seem to work decently to identify single transcripts
