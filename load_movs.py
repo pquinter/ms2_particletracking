@@ -7,7 +7,7 @@ where dir_to_load contains multiple directories, each with groups of 3 movies
 if multistage movie not found, try loading single movie
 """
 import numpy as np
-from im_utils import z_project
+from im_utils import z_project, load_zproject_STKcollection
 from skimage import io
 from skimage.external.tifffile import TiffFile
 from sys import argv
@@ -15,18 +15,6 @@ from os import mkdir, listdir
 import glob
 from tqdm import tqdm
 import warnings
-
-# load movies and save them
-
-def load_zproject_STKcollection(load_pattern, savedir=None):
-    """
-    Load collection of STK files and z-project each
-    """
-    collection = io.ImageCollection(load_pattern, load_func=TiffFile)
-    collection = np.stack([z_project(zseries.asarray()) for zseries in collection])
-    if savedir:
-        io.imsave(savedir, collection)
-    return collection
 
 rootdir = argv[1] + '/'
 datadir = '/Volumes/QuinDrive/Research/Data/YeastMicroscopy/' + rootdir

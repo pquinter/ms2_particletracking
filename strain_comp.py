@@ -46,108 +46,109 @@ spot_df['svm_label'] = labels_pred
 # get all 3d images
 ims_stack = load_ims(rrdir+'zstacks/', 'STK')
 
-# size of image window to get around predicted center
-wsize =  11
-bbox_imsstack = spot_df.apply(lambda x: [get_bbox3d(x[['x','y','z']],
-                    size=wsize, im=ims_stack[x.imname])], axis=1)
-# clear those not in border
-notinborder = bbox_imsstack.apply(lambda x: np.array_equal(x[0].shape,
-                (wsize, wsize, wsize)))
-spot_df = spot_df[notinborder].copy().reset_index(drop=True)
-
-# get mrna ims
-mrna_df = spot_df[spot_df.svm_label=='mrna']
-mrna_ims = get_batch_bbox(mrna_df, ims_stack, wsize, im3d=True)
-# convert to float, otherwise regression fails
-mrna_ims_float = skimage.img_as_float(mrna_ims)
-# average mrna image
-mrna_av = np.mean(mrna_ims_float, axis=0)
-
-# Initial guesses for regression. Center is roughly center of image.
-# Params are: r, a, bx, by, bz, cx, cy, cz
-p0 = (np.median(mrna_av), np.median(mrna_av), *((wsize/2),)*3, 2, 2, 2)
-# Parameter bounds, the same for all b's and c's
-p_range = ((0,1), (0, 1), *((0, wsize),)*6)
-
-
-## Params are: r, a, bx, by, bz, cx, cy, cz
-## Initial guesses for regression. Center is roughly center of image.
-#p0 = (100, 100, *((wsize/2,)*3), 2, 2, 2)
-## Least of squares regression on residuals
-popt3d, errbars = imstack_gauss3d_regress(mrna_av, p0, p_range)
-# substract background by setting offset to 0
-popt3d[0] = 0
-
-X = np.array([d.ravel() for d in np.indices(mrna_av.shape)])
-checkGaussFit3d(mrna_av, X, popt3d)
-mrna_fit_int = gauss3d(X, popt3d).sum()
-
-# get all images
-ts_df = spot_df[spot_df.svm_label=='TS'].copy().reset_index(drop=True)
-ts_ims = get_batch_bbox(ts_df, ims_stack, wsize, im3d=True)
-# convert to float, otherwise regression fails
+# get all spot images
+#ts_df = spot_df[spot_df.svm_label=='TS'].copy().reset_index(drop=True)
+ts_ims = get_batch_bbox(spot_df, ims_stack, wsize, im3d=True, pad=2)
+# convert to float for regression
 ts_ims_float = skimage.img_as_float(ts_ims)
-
 
 # Dataframe to store optimized params and error bars by field of view
 popt_all = pd.DataFrame()
 # Initial guesses for regression. Center is roughly center of image.
 # Params are: r, a, bx, by, bz, cx, cy, cz
+# r is offset, a is coeff, b are center coord, c are sigmas
 p0 = (np.median(ts_ims_float), 0.05, *((wsize/2),)*3, 2, 2, 2)
 # Parameter bounds, the same for all b's and c's
 p_range = ((0,1), (0, 1), *((0, wsize),)*6)
 for i, ts_im in tqdm(enumerate(ts_ims_float)):
-    # skip beads with misc errors in optimization (e.g. can't compute hessian)
-    try:
-        _popt, _err =  imstack_gauss3d_regress(ts_im, p0, p_range)#, leastsq=0, return_err=False)
-    except:
-        _popt = np.full_like(p0, np.nan)
+    try: #minimizing the negative log posterior
+        _popt, _err =  imstack_gauss3d_regress(ts_im, p0, p_range)
+    except: #least of squares is more robust
+        try:
+            _popt =  imstack_gauss3d_regress(ts_im, p0, leastsq=1)
+        except:
+            _popt = np.full_like(p0, np.nan)
     # Add to dataframe
     _popt_df = pd.DataFrame(_popt).T
     popt_all = pd.concat((popt_all, _popt_df), ignore_index=True)
 popt_all.columns = ('r', 'a', 'bx', 'by', 'bz','cx','cy','cz')
-# substract background by setting offset ('r') to zero --> not great
-popt_all['r'] = 0
 
-# see what makes images fail??? -> no striking visible difference
-#failed = ts_ims[popt_all.cz<0].copy()
-#failed = np.stack([z_project(im.T) for im in failed])
-#plt.figure()
-#plt.imshow(im_block(failed, 10, norm=1))
-#
-#succ = ts_ims[popt_all.cz>0].copy()
-#succ = np.stack([z_project(im.T) for im in succ])
-#plt.figure()
-#plt.imshow(im_block(succ, 40, norm=1))
+# check fits
+ts_ims_fit = np.stack([gauss3d(X, im[1]).reshape((-1, *ts_ims[0].shape[:2])) for im in popt_all.iterrows()])
+nullind = popt_all.sort_values(['a', 'bx', 'by', 'bz', 'cx', 'cy', 'cz']).index
+ims_fit = np.stack([z_project(im) for im in ts_ims_fit[nullind]])
+ims_raw = np.stack([z_project(im) for im in ts_ims[nullind]])
 
-# compute TS intensities
-fit_ints = popt_all.apply(lambda x: gauss3d(X, x).sum(), axis=1)
+fig, axes = plt.subplots(1, 2, sharex=True, sharey=True)
+axes[0].imshow(im_block(ims_fit, 100, norm=1), cmap='viridis')
+axes[1].imshow(im_block(ims_raw, 100, norm=1), cmap='viridis')
+
+# compute TS intensities; substract background by substracting offset ('r')
+fit_ints = popt_all.apply(lambda x: gauss3d(X, x).sum() - x.r*wsize**3, axis=1)
+
+# compute average mRNA intensity using good-bad data model
+mrna_ind = spot_df.svm_label=='mrna'
+mrna_int = fit_ints[mrna_ind]
+with pm.Model() as model:
+    # Priors
+    mu = pm.Uniform('mu', 0, 600)
+    sigma = bebi103.pm.Jeffreys('sigma', 0.1, 1000)
+    sigma_bad = bebi103.pm.Jeffreys('sigma_bad', sigma, 1000)
+    w = pm.Beta('w', alpha=0.5, beta=0.5, shape=len(mrna_int))
+    # Likelihood is good-bad data model.
+    a_obs = bebi103.pm.GoodBad('a_obs',
+                               mu=mu,
+                               sigma=sigma,
+                               sigma_bad=sigma_bad,
+                               w=w,
+                               observed=mrna_int)
+    trace_goodbad = pm.sample(draws=2000, tune=2000, njobs=4)
+
+df_mcmc = bebi103.pm.trace_to_dataframe(trace_goodbad)
+# get prob of being bad (high w -> bad, low w -> good)
+wcols = [c for c in df_mcmc.columns if 'w_' in c]
+w = np.median(df_mcmc[wcols].values, axis=0)
+plt.figure()
+corner.corner(df_mcmc[['mu', 'sigma', 'sigma_bad']])
+# smaller valued intensities have higher prob of being bad
+plt.scatter(w, mrna_int, s=10, alpha=0.2)
+# add bad prob and filter
+mrna_int['w_bad'] = w
+mrna_int_good = mrna_int[(mrna_int['w_bad']<0.2)]
+
+
 # compute mrnas per TS and add to DF
 mrnas = fit_ints/mrna_fit_int
 
 spot_df = pd.concat((spot_df, popt_all), axis=1)
 #TODO:
+# check cell segmentation, getting cell count much higher than it is!
 # filter based on 3D gaussian fit!!
 # train SVM including opt params?? probably would work much better
 # use single class SVM
 # - get number of cells, even those without transcripts!
-#spot_dfbk.to_csv('../output/mrnaquant_20171201_test.csv', index=False)
-spot_df = pd.read_csv('../output/mrnaquant_20171201_test.csv')
+#spot_df.to_csv('../output/mrnaquant_20171201_succesfulRegress.csv', index=False)
+#spot_df = pd.read_csv('../output/mrnaquant_20171201_succesfulRegress.csv')
 
 #spot_df['mrnas'] = mrnas
 #spot_df['mrnas'] = spot_df.mass / mrna_df.mass.median()
 #ints = spot_df.apply(lambda x: gauss3d(X, (0, x.a, x.bx, x.by, x.bz, x.cx, x.cy, x.cz)).sum(), axis=1)
-spot_df['mrnas'] = ints/mrna_fit_int
+spot_df['mrnas'] = np.round(mrnas)
 spot_df['strain'] = spot_df.imname.apply(lambda x: x.split('FISH')[0])
-sns.stripplot(x='mrnas', y='strain', data=spot_df[(spot_df.r>0)&(spot_df.mrnas>0)], alpha=0.01)
+sns.stripplot(x='mrnas', y='strain', data=spot_df[spot_df.svm_label=='mrna'][['mrnas','strain']], alpha=0.1)
 plt.tight_layout()
 
 # count transcripts by cell
 spot_df['cellid'] = spot_df['imname'] + spot_df.cell_label.apply(str)
-transcripts_bycell = spot_df[(spot_df.r>0)&(spot_df.mrnas>0)&(spot_df.svm_label.isin(['mrna','TS']))].groupby('cellid').mrnas.sum(skipna=True).reset_index()
+transcripts_bycell = spot_df[(spot_df.mrnas<50)&(spot_df.svm_label.isin(['TS','mrna']))].groupby('cellid').mrnas.sum(skipna=True).reset_index()
 transcripts_bycell['strain']  = transcripts_bycell.cellid.apply(lambda x: x.split('FISH')[0])
 
-transcripts_bycell = spot_df[spot_df.svm_label=='TS']
+# get empty cells
+cells_wrna = transcripts_bycell.groupby('strain').mrnas.count().reset_index()
+total_cells = cellnums.groupby('strain').cellnum.sum(skipna=True).reset_index()
+total_cells = pd.merge(total_cells, cells_wrna, on='strain')
+total_cells['empty']  = total_cells.cellnum - total_cells.mrnas
+
 fig, axes = plt.subplots(2,2)
 axes = iter(np.ravel(axes))
 for name, group in transcripts_bycell.groupby('strain'):
@@ -155,8 +156,14 @@ for name, group in transcripts_bycell.groupby('strain'):
     _median, _mean = np.median(group.mrnas), np.mean(group.mrnas)
     ax=next(axes)
     label='{0} mean {1:0.2f} median {2:0.2f}'.format(name, _mean, _median)
+    #mrnas by cell
+    mrnas_bycell = group.mrnas.values
+    # empty cells
+    empty_cells = np.full(total_cells[total_cells.strain==name]['empty'].values, 0)
+    # complete distribution
+    mrnas_bycell = np.concatenate((mrnas_bycell, empty_cells))
     #sns.distplot(group.mrnas, ax=ax, bins=50)
-    plot_ecdf(np.round(group.mrnas), ax, label=label, formal=0)
+    plot_ecdf(np.round(mrnas_bycell), ax, label=label, formal=0)
     ax.set_title(label)
 plt.tight_layout()
 #plt.legend()

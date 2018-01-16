@@ -16,22 +16,22 @@ from matplotlib import pyplot as plt
 
 # load z-projected movies
 movs = {}
-movs_smooth = {}
+#movs_smooth = {}
 
-ddir = '../data/PP7/PP7_HJ_projected/unloaded/'
+ddir = '../data/PP7/PP7_HJ_projected/'
 for fname in tqdm(os.listdir(ddir)):
     if 'tif' in fname:
         _mov = io.imread(ddir + fname)
         _mname = fname.split('.')[0]
         movs[_mname] = _mov
         # Convert image to float
-        _mov_norm = normalize_im(_mov)
-        # substract background with strong gaussian blur
-        _mov_bg = skimage.filters.gaussian(_mov_norm, sigma=50)
-        _mov_norm -= _mov_bg
-        # smooth with gaussian
-        _mov_smooth = skimage.filters.gaussian(_mov_norm, sigma=1)
-        movs_smooth[_mname] = _mov_smooth
+        #_mov_norm = normalize_im(_mov)
+        ## substract background with strong gaussian blur
+        #_mov_bg = skimage.filters.gaussian(_mov_norm, sigma=50)
+        #_mov_norm -= _mov_bg
+        ## smooth with gaussian
+        #_mov_smooth = skimage.filters.gaussian(_mov_norm, sigma=1)
+        #movs_smooth[_mname] = _mov_smooth
     else: next
 # remove crappy movie
 #del movs['12032017_TL47_time_4']
@@ -47,7 +47,7 @@ nuclei_peaks = pd.DataFrame()
 
 for mname in tqdm(movs):
     #test on a single movie
-    if mname!='20171219_67f6_Late': continue
+    #if mname!='20171219_67f6_Late': continue
     print('analyzing {}'.format(mname))
     movie = movs[mname]
     print('normalizing...')
@@ -73,8 +73,10 @@ for mname in tqdm(movs):
     _parts['label'] = _parts.apply(lambda coords:\
             markers_proj_enlarged[int(coords.y), int(coords.x)], axis=1)
     # track them, search range of 10, remember particle for 5 frames
+    # if many more particles than nuclei, skip this movie??
+    # should do first round of classification here, with a better training set
     print('tracking particles...')
-    _parts = tp.link_df(_parts, 10, memory=5)
+    _parts = tp.link_df(_parts, 5, memory=5)
     # merge particles of the same cell
     _parts_ = pd.DataFrame()
     for label, group in _parts.groupby('label'):
@@ -94,8 +96,8 @@ for mname in tqdm(movs):
     _parts = _parts_
     # remove peaks that never were in cells
     _parts = _parts[_parts.label>0]
-    # filter, keep only trajectories of more than 2
-    _parts = tp.filter_stubs(_parts, 5)
+    # filter, keep only trajectories of more than 10 frames
+    _parts = tp.filter_stubs(_parts, 10)
     # Dataframe for movie nuclei properties
     _nuclei = pd.DataFrame()
     print('measuring nuclei properties...')

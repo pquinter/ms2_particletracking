@@ -140,7 +140,7 @@ sns.distplot(peaks[(peaks.manual_sel==1)].mass.values)
 
 
 #peaks_woTS.to_csv('../output/spot_trainingset/111617_TL47PP7smFish_SpotManualSel.csv', index=False)
-peaks_woTS = pd.read_csv('../output/spot_trainingset/111617_TL47PP7smFish_SpotManualSel.csv')
+peaks = pd.read_csv('../output/spot_trainingset/111617_TL47PP7smFish_SpotManualSel.csv')
 peaks_sel = peaks_woTS[peaks_woTS.manual_sel==0]
 
 # pickle all images and labels
@@ -215,10 +215,10 @@ plt.legend()
 ################################################################################
 from sklearn import model_selection
 from sklearn import metrics
-from sklearn.svm import SVC
+from sklearn import svm
 from sklearn.utils.extmath import fast_dot
 
-with open('../output/spot_trainingset/111617_TL47PP7smFish_Training_Labels_ImsSmoothMinusBkUnnorm.pkl', 'rb') as f:
+with open('../output/spot_trainingset/111617_TL47PP7smFish_Training_ImsNormNotSmoothSize9.pkl', 'rb') as f:
     spot_labels = pickle.load(f)
     spot_ims = pickle.load(f)
 # Each image must not be normalized independently! Int is important for finding TS
@@ -233,9 +233,14 @@ spot_train, spot_test, labels_train, labels_test = \
 C_range = np.logspace(-6, 1, 10)
 gamma_range = np.logspace(-6, 1, 10)
 param_grid = dict(gamma=gamma_range, C=C_range)
-clf = model_selection.GridSearchCV(SVC(kernel='rbf', class_weight='balanced'),
+clf = model_selection.GridSearchCV(svm.SVC(kernel='rbf', class_weight='balanced'),
                                    param_grid)
 clf = clf.fit(spot_train, labels_train)
+# one class SVM
+#clf = model_selection.GridSearchCV(svm.OneClassSVM(kernel='rbf', class_weight='balanced'),
+#                                   param_grid)
+#clf = clf.fit(spot_train)
+
 scores = clf.cv_results_['mean_test_score'].reshape(len(C_range), 
                                                     len(gamma_range))
 
@@ -262,7 +267,7 @@ The best parameters are {'C': 100000.0, 'gamma': 1.0} with a score of 0.93
 avg / total       0.93      0.93      0.93       930
 """
 # save classifier
-with open('../output/spot_trainingset/clf_beta0.pkl', 'wb') as f:
+with open('../output/spot_trainingset/clf_beta1_size9NormedNotSmooth.pkl', 'wb') as f:
     pickle.dump(clf, f)
 
 
@@ -288,7 +293,6 @@ plot_gallery(s_photos, 10, 10, titles=labels_pred_sample, n_row=rows, n_col=cols
 
 # Classify PP7 spots ========================================================
 
-pp7 = pd.read_pickle('../output/pp7/nuclei_peaks.p')
 # get a sample of brightest spots per trajectory
 #pp7['pid'] = pp7.apply(lambda x: str(x.particle)+x.imname, axis=1)
 #pp7_brightest = pp7.sort_values('mass').drop_duplicates('pid', keep='last')
@@ -299,8 +303,6 @@ pp7 = pd.read_pickle('../output/pp7/nuclei_peaks.p')
 ## found spots with low minmass (stored in _parts) to use as crap class for SVM
 #crap = _parts[_parts<500].sample(1000, random_state=42)
 ## label images of sample
-#spot_labels, spot_ims = sel_training(crap, movs, movie=True,
-#        scale=1, ncols=50, mark_center=False, s=9, normall=0)
 #io.imshow(im_block(spot_ims[spot_labels], 3, norm=1), cmap='viridis')
 #plt.figure()
 #io.imshow(im_block(spot_ims[~spot_labels], 20, norm=1), cmap='viridis')
@@ -321,19 +323,68 @@ pp7 = pd.read_pickle('../output/pp7/nuclei_peaks.p')
 
 # train classifier, using code above in the meantime
 # save classifier
-with open('../output/pp7/clf_beta0_pp7spots.pkl', 'wb') as f:
-    pickle.dump(clf, f)
+#with open('../output/pp7/clf_beta0_pp7spots.pkl', 'wb') as f:
+#    pickle.dump(clf, f)
 
 # Classify PP7 images ========================================================
 # load classifier
 with open('../output/pp7/clf_beta0_pp7spots.pkl', 'rb') as f:
     clf = pickle.load(f)
+pp7 = pd.read_pickle('../output/pp7/nuclei_peaks.p')
 # classify!
-pp7_clf = classify_spots_from_df(pp7, clf, movs_smooth, 10, movie=True)
+#pp7_clf = classify_spots_from_df(pp7, clf, movs_smooth, 10, movie=True)
 # Need to normalize: it's structure, not intensity that matters
 pp7_labels_pred, pp7_ims = classify_spots_from_df(pp7, clf, movs, 9,
         movie=True, norm=True)
 # check them out
 plt.imshow(im_block(pp7_ims[pp7_labels_pred.plabel==True], 100), cmap='gist_stern')
 # seems alright, just get those trajectories with at least two good spots
-svm_good_parts = filter_parts(pp7_labels_pred, thresh=2)
+svm_good_parts = pp7_labels_pred[pp7_labels_pred.plabel==True]
+svm_good_parts['pid'] = svm_good_parts.apply(lambda x: str(x.particle)+x.imname, axis=1)
+svm_good_parts = filter_parts(svm_good_parts, thresh=2)
+# save
+with open('../output/pp7/pp7spots_SVMfiltered_20171219.pkl', 'wb') as f:
+    pickle.dump(svm_good_parts, f)
+
+# manually select cells to trash
+movs_proj = {}
+for k in movs:
+    movs_proj[k] = z_project(movs[k])
+
+# remove unloaded movies from dataframe
+pp7 = pp7[pp7.imname.isin(movs_proj.keys())]
+
+pp7['cid'] = pp7.apply(lambda x: str(x.label)+x.imname, axis=1)
+pp7_ucid = pp7.sort_values('mass', ascending=False).drop_duplicates('cid')
+xx = pp7_ucid.apply(lambda x: (x.bbox[0] + x.bbox[2])/2, axis=1)
+yy = pp7_ucid.apply(lambda x: (x.bbox[1] + x.bbox[3])/2, axis=1)
+pp7_ucid['x'] = yy
+pp7_ucid['y'] = xx
+
+spot_labels, spot_ims, filt_pp7df = sel_training(pp7_ucid, movs_proj, movie=0,
+        scale=1, ncols=20, mark_center=0, s=30, normall=0)
+sel_cid = filt_pp7df[spot_labels].cid
+nuclei_peaks = pp7[pp7.cid.isin(sel_cid)]
+
+# make movie of all for reference selection
+nuc_movs = []
+norm=True#normalize each frame to improve viz
+for (name, label), nuc in pp7[pp7.cid.isin(sel_cid)].groupby(['imname', 'label'], sort=False):
+    # get whole movie from original
+    b = nuc.bbox.iloc[0] # bounding box coordinates are the same for all frames
+    bx, by = (slice(b[0], b[2]), slice(b[1], b[3]))
+    nuc_mov = movs[name][:, bx, by]
+    nuc_trackmov = tracking_movie(nuc_mov, nuc, x='bbx', y='bby')
+    nuc_movs.append(nuc_trackmov)
+nuc_movs = [skimage.img_as_uint(normalize(nuc_movs[i])) for i in range(len(nuc_movs))]
+globmov = concat_movies(nuc_movs, nrows=12)
+io.imsave('../output/pp7/tracking_movs_classif/allmovies_ref.tif'.format(m), globmov)
+
+# manually select particles to trash
+s=30
+pp7_upid = pp7.sort_values('mass', ascending=False).drop_duplicates('pid')
+spot_labels, spot_ims, filt_pp7df = sel_training(pp7_upid, movs_proj, movie=0,
+        scale=1, ncols=20, mark_center=0, s=s, normall=0)
+sel_pids = pp7_upid[spot_labels].pid
+with open('../output/pp7/pp7spots_handselected_20180105.pkl', 'wb') as f:
+    pickle.dump(pp7[pp7.pid.isin(sel_pids)], f)

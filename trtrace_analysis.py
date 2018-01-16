@@ -38,7 +38,7 @@ def align_trace(trace, interpolate=np.mean):
     return trace_aligned
 
 # load nuclei and particle tracking data
-nuclei_peaks = pd.read_pickle('../output/pp27/pp7spots_SVMfiltered.pkl')
+nuclei_peaks = pd.read_pickle('../output/pp7/pp7spots_SVMfiltered_20171219.pkl')
 
 # create mass heatmap
 hmap = pd.DataFrame()
@@ -52,6 +52,33 @@ for name, group in nuclei_peaks.groupby('imname'):
 # convert frame numbers to time in seconds, last column is movie name
 hmap.columns = list(np.arange(20, 20*hmap.shape[1], 20)) + ['movie']
 plot_hmap(hmap, normtrace=True)
+
+# merge complementary traces
+hmap = pd.DataFrame()
+movcount = defaultdict(int)
+# number of frames
+no_frames, alltraces = nuclei_peaks.frame.max() + 1, 0
+for (imname, label), group in nuclei_peaks.groupby(('imname', 'label')):
+    trace = np.zeros(no_frames)
+    for f in range(no_frames):
+        spot_frame = group[group.frame==f]
+        if len(spot_frame) < 1:
+            # try following the particle
+            try:
+                trace[f] = nuclei_peaks[(nuclei_peaks.pid==curr_pid)&\
+                        (nuclei_peaks.frame==f)].mass
+            except ValueError: continue
+        if len(spot_frame) == 1:
+            trace[f] = spot_frame.mass
+            curr_pid = spot_frame.pid.values[0]
+        elif len(spot_frame)>1:
+            trace[f] = spot_frame.sort_values('signal').tail(1).mass
+            print(spot_frame)
+    try:
+        alltraces = np.vstack((alltraces, trace))
+    except ValueError: alltraces = trace
+plot_hmap(pd.DataFrame(alltraces))
+
 
 # Align traces to the left
 hmap_aligned = hmap.drop('movie', axis=1).apply(lambda x: align_trace(x,

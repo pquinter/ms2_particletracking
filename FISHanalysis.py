@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import skimage
 from skimage import io
+from skimage.external.tifffile import TiffFile
 import trackpy as tp
 import pymc3 as pm
 import bebi103
@@ -22,8 +23,10 @@ def segment_cellnuc(im_cells, im_nuclei):
     """
     Segment cells/nuclei
     """
+    thresh_im_cells = im_cells>skimage.filters.threshold_otsu(im_cells)
+    thresh_im_nuclei = im_nuclei>skimage.filters.threshold_otsu(im_nuclei)
     # mask projected image using adaptive threshold
-    mask_cells = mask_image(im_cells, min_size=100, block_size=151,
+    mask_cells = mask_image(im_cells, min_size=1000, block_size=151,
         selem=skimage.morphology.disk(15))
         #im_thresh=im_cells>skimage.filters.threshold_otsu(im_cells))
     mask_nuclei = mask_image(im_nuclei, min_size=100, block_size=101,
@@ -35,8 +38,13 @@ def segment_cellnuc(im_cells, im_nuclei):
     # watershed transform using nuclei as basins, also removes cells wo nucleus
     cell_markers = skimage.morphology.watershed(cell_markers,
             nuclei_markers, mask=mask_cells)
+    # update masks
+    mask_cells = cell_markers>0
+    mask_nuclei = mask_nuclei * mask_cells
+
     # ensure use of same labels for nuclei
     nuclei_markers  = mask_nuclei * cell_markers
+
 
     # enlarge cell markers to keep particles close to edge
     cell_markers_enlarged = skimage.morphology.dilation(cell_markers,
@@ -44,60 +52,72 @@ def segment_cellnuc(im_cells, im_nuclei):
 
     return cell_markers_enlarged, cell_markers, nuclei_markers, mask_cells, mask_nuclei
 
-rdir = '../data/FISH/20171122/'
-for _dir in tqdm(os.listdir(rdir)):
-    if 'DS_Store' in _dir: continue
-    ddir = rdir + _dir + '/'
-    # load z-projected movies
-    ims = {}
-    for fname in tqdm(os.listdir(ddir)):
-        if 'tif' in fname:
-            _fname = fname.split('_')
-            ims[_fname[1]+'_'+_fname[-1].split('.')[0]] = io.imread(ddir + fname)
-        else: next
+rrdir = '../data/FISH/20171201/'
+ims_projected = load_ims(rrdir+'zprojected/', 'tif')
+ims_stack = load_ims(rrdir+'zstacks/', 'STK')
 
-    # area and intensity limits
-    maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,0.99), (15, 500), (20, 500), (500, 5000)
+# area and intensity limits
+maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,0.99), (15, 500), (20, 500), (500, 5000)
+# try it on a sample
+#sample = ['681FISHGal10PP7_s5','67f1FISHGal10PP7_s9','TL47FISHGal10PP7_s7','664FISHGal10PP7_s3']
 
-    # dataframe for single transcript peaks
-    peaks = pd.DataFrame()
+cellnums, imnames = [], []
+# dataframe for single transcript peaks
+peaks = pd.DataFrame()
+for imname in tqdm(ims_stack):
+#for imname in tqdm(sample):
 
-    for imname in tqdm(ims):
+    # get three-channel z-projected image
+    print('analyzing {}'.format(imname))
+    im = ims_projected[imname]
+    # needed because had incomplete dataset
+    #try:
+    #    im = ims_projected[imname]
+    #except KeyError: continue
+    # split channels by color
+    fish = im[:,:,0] # smFISH channel
+    autof = im[:,:,1] # autofluorescent channel for cell segmentation
+    dapi = im[:,:,2] # Dapi/nuclear channel
+    # get zstack for FISH
+    fish_stack = ims_stack[imname]
 
-        # get three-channel image
-        print('analyzing {}'.format(imname))
-        im = ims[imname]
+    # segment cells and nuclei ===========================================
+    print('segmenting cells...')
+    cell_markers_enlarged, cell_markers, nuclei_markers,\
+            mask_cells, mask_nuclei = segment_cellnuc(autof, dapi)
+    segmented_im = cell_markers_enlarged+mask_nuclei
+    io.imsave('../output/segmentation/{}_segmentation.tif'.format(imname),
+            skimage.img_as_int(segmented_im))
+    cellnums.append(len(np.unique(cell_markers)))
+    imnames.append(imname)
 
-        # split channels by color
-        fish = im[:,:,0] # smFISH channel
-        autof = im[:,:,1] # autofluorescent channel for cell segmentation
-        dapi = im[:,:,2] # Dapi/nuclear channel
+    # Identify peaks =========================================================
+    # identify transcription particles, diameter of 3 works well
+    # this params seem to work decently to identify single transcripts
+    # Imaging params: LeicaImagingFacility, 100%int 300msExp 0.2uZstack
+    #_parts = tp.locate(fish, 3, minmass=45)
+    # for 3D, below seems to work well
+    print('identifying peaks...')
+    #_parts = tp.locate(fish_stack, 9, minmass=1000)
+    #_parts['imname'] = imname
 
-        # segment cells and nuclei ===========================================
-        print('segmenting cells...')
-        cell_markers_enlarged, cell_markers, nuclei_markers,\
-                mask_cells, mask_nuclei = segment_cellnuc(autof, dapi)
+    ## Assign transcripts to cells ====================================================
+    ## Get cell label
+    #_parts['cell_label'] = _parts.apply(lambda coords:\
+    #        cell_markers_enlarged[int(coords.y), int(coords.x)], axis=1)
+    ## Get nuclear label
+    #_parts['nuc_label'] = _parts.apply(lambda coords:\
+    #        nuclei_markers[int(coords.y), int(coords.x)], axis=1)
+    ## Get total number of cells identified; cells without mRNA matter too
+    #_parts['cell_number'] = len(np.unique(cell_markers))
 
-        # Identify peaks =========================================================
-        # identify transcription particles, diameter of 3 works well
-        # this params seem to work decently to identify single transcripts
-        # Imaging params: LeicaImagingFacility, 100%int 300msExp 0.2uZstack
-        _parts = tp.locate(fish, 3, minmass=45)
-        _parts['imname'] = imname
+    #peaks = pd.concat((peaks, _parts))
 
-        # Assign transcripts to cells ====================================================
-        # Get cell label
-        _parts['cell_label'] = _parts.apply(lambda coords:\
-                cell_markers_enlarged[int(coords.y), int(coords.x)], axis=1)
-        # Get nuclear label. If label>0, it is inside the nucleus
-        _parts['nuc_label'] = _parts.apply(lambda coords:\
-                nuclei_markers[int(coords.y), int(coords.x)], axis=1)
+    print('done')
 
-        peaks = pd.concat((peaks, _parts))
-
-    # filter peaks that are not in cells
-    peaks = peaks[(peaks.cell_label>0)].reset_index(drop=True)
-    peaks.to_csv('../output/{}_smFishPeaks.csv'.format(_fname[1]), index=False)
+# filter peaks that are not in cells. If label>0, it is inside cell.
+peaks = peaks[(peaks.cell_label>0)].reset_index(drop=True)
+peaks.to_csv('../output/{}_smFishPeaks3D.csv'.format(rrdir.split('/')[-2]), index=False)
 
 
 
@@ -242,10 +262,3 @@ coo = np.sum((test_spot[['x','y']], (-768, -106)), axis=0)
 # make sure everything is fine
 plt.imshow(im, cmap='gist_stern')
 plt.scatter(*coo, s=50, c='b')
-
-def plot_ecdf(arr, formal=0, label=''):
-    #plt.figure()
-    if formal:
-        plt.plot(*ecdf(arr, conventional=formal), label=label)
-    else:
-        plt.scatter(*ecdf(arr, conventional=formal), s=15, alpha=0.3, label=label)

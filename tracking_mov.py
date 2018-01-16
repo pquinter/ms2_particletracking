@@ -4,8 +4,7 @@ from collections import defaultdict
 
 
 # load nuclei and particle tracking data
-nuclei_peaks = pd.read_pickle('../output/GFPEnvyScar/nuclei_peaks.p')
-nuclei_peaks = pd.read_pickle('../output/pp7/pp7spots_SVMfiltered_20171219.pkl')
+#nuclei_peaks = pd.read_pickle('../output/GFPEnvyScar/nuclei_peaks.p')
 
 # load z-projected movies to make tracking movie
 movs = {}
@@ -32,6 +31,8 @@ for (name, label), nuc in nuclei_peaks.groupby(['imname', 'label']):
     nuc_movs[name].append(nuc_trackmov)
 
 # Movie by particle instead of nucleus
+#nuclei_peaks = pd.read_pickle('../output/pp7/pp7spots_SVMfiltered_20171219.pkl')
+nuclei_peaks = pd.read_pickle('../output/pp7/pp7spots_SVMfiltered_20171219.pkl')
 nuc_movs = defaultdict(list)
 show_wholemov=True #show whole movie or just frames with id peaks
 norm=True#normalize each frame to improve viz
@@ -55,4 +56,4 @@ for m in nuc_movs:
     globmov = concat_movies(_movs, nrows=4)
     io.imsave('../output/pp7/tracking_movs_classif/movie_bypid_{}.tif'.format(m), globmov)
 # visualize movie, probably better in .tif using fiji
-show_movie(globmov, 0.1, loop=True)
+#show_movie(globmov, 0.1, loop=True)

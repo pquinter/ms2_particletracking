@@ -268,9 +268,11 @@ def checkGaussFit3d(bead_im, X, popt3d):
     z = np.max(z_project(bead_im.T), axis=0)
     # plot fit for each dimension
     fig, axes = plt.subplots(3)
+    dim = ('x','y','z')
     for i, (c_, b_, d) in enumerate(((cx, bx, x), (cy, by, y), (cz, bz, z))):
         axes[i].plot(xx, gauss1d(xx, (r, a, b_, c_)))
         axes[i].plot(np.linspace(0, len(d)-1, len(d)), d, '.')
+        axes[i].set_title(dim[i])
         #axes[i].axvspan(b_-FWHMxyz[i]/2, b_+FWHMxyz[i]/2, facecolor='k', alpha=0.1)
     return None
 
