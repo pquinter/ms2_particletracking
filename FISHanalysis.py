@@ -19,9 +19,12 @@ from matplotlib import pyplot as plt
 %matplotlib
 
 
-def segment_sel_nuc(im_nuclei, imname):
+def segment_sel_nuc(im_nuclei, nuc_clf, imname='nuclei'):
     """
     Segment cells/nuclei and manually classify
+    
+    imname: str
+        image name. Because there is only one image, it can be arbitrary
     """
     # mask projected image using adaptive threshold and create markers
     mask_nuclei = mask_image(im_nuclei, min_size=100, block_size=101,
@@ -30,25 +33,24 @@ def segment_sel_nuc(im_nuclei, imname):
 
     # Classification of segmented nuclei ======================================
     # get centroids (so all bbox are same size). Dapi is most visible.
-    seg_coords = pd.DataFrame([i.centroid for i in\
+    _seg_coords = pd.DataFrame([i.centroid for i in\
         skimage.measure.regionprops(nuclei_markers, im_nuclei)], columns=['y','x'])
-    # add image name for sel_training func
-    seg_coords['imname'] = imname
-    # make a segmentation image of raw + scaled masks (eq to ~0.3 alpha)
-    alpha = np.mean(im_nuclei)/np.mean(mask_cells)*0.0025
-    seg_im = im_nuclei + (mask_cells + mask_nuclei.astype(int))*alpha
-    # select bad images (usually more good than bad)
-    _sel_seg, _seg_ims, _seg_coords = sel_training(seg_coords, {imname: seg_im},
-                        s=50, ncols=len(seg_coords)//3, figsize=(25.6, 13.6))
-    # remove selected markers. Index is original markers, in case some were
-    # removed in sel_training because of border proximity
-    # First element of array is background (0)
-    for l in _seg_coords[_sel_seg].index.values+1:
-        nuclei_markers[np.where(np.isclose(nuclei_markers,l))] = 0
-    # add selection array to df to be pragmatic
-    _seg_coords['is_nucleus'] = ~_sel_seg
 
-    return nuclei_markers, _seg_ims, _seg_coords
+    nuc_regionprops = skimage.measure.regionprops(nuclei_markers, im_nuclei)
+    _seg_coords = regionprops2df(nuc_regionprops, props=('label', 'centroid'))
+    # expand centroid into x, y coords
+    _seg_coords[['y','x']] = _seg_coords.centroid.apply(pd.Series)
+    # add image name for sel_training func
+    _seg_coords['imname'] = imname
+
+    # classify
+    _seg_coords, spot_ims = classify_spots_from_df(_seg_coords, clf, {imname: im_nuclei}, s=50)
+    labels_to_remove = _seg_coords[_seg_coords.plabel==False].label
+    # remove selected markers
+    for l in labels_to_remove:
+        nuclei_markers[np.where(np.isclose(nuclei_markers,l))] = 0
+
+    return nuclei_markers
 
 def segment_cellfromnuc(im_cells, nuclei_markers):
     """
@@ -122,26 +124,15 @@ for imname in tqdm(ims_stack):
 
     # segment cells and nuclei ===========================================
     print('segmenting cells...')
-    nuclei_markers, _seg_ims, _seg_coords = segment_sel_nuc(dapi, imname)
+
+    # classify nuclei markers here
+    nuclei_markers = segment_sel_nuc(dapi, nuc_clf)
     cell_markers_enlarged, cell_markers, nuclei_markers,\
             mask_cells, mask_nuclei = segment_cellfromnuc(autof, nuclei_markers)
     segmented_im = cell_markers_enlarged + mask_nuclei
     io.imsave('../output/segmentation/{}_segmentation.tif'.format(imname),
                                         skimage.img_as_int(segmented_im))
-    # save selection history
-    seg_coords = pd.concat((seg_coords, _seg_coords))
-    try:
-        seg_ims = np.concatenate((seg_ims, _seg_ims))
-    except ValueError:
-        seg_ims = _seg_ims
-    assert len(seg_ims) == len(seg_coords)
 
-    cellnums.append(len(np.unique(cell_markers)[1:]))
-    imnames.append(imname)
-
-
-    # TODO: move this to before watershed so as only to keep cells with real
-    # nuclei
     # Identify peaks =========================================================
     # identify transcription particles, diameter of 3 works well
     # this params seem to work decently to identify single transcripts
@@ -171,6 +162,48 @@ peaks = peaks[(peaks.cell_label>0)].reset_index(drop=True)
 peaks.to_csv('../output/{}_smFishPeaks3D.csv'.format(rrdir.split('/')[-2]), index=False)
 
 
+# get nuclei centroid dataframe for manual selection of training set =========
+ims_projected_dapi = load_ims(rrdir+'zprojected/', 'tif', channel=2)
+seg_coords = pd.DataFrame()
+ims_dapi_clf = {}
+for imname in tqdm(ims_projected_dapi):
+    # get three-channel z-projected image
+    print('analyzing {}'.format(imname))
+    dapi = ims_projected_dapi[imname]
+    # segment nuclei ===========================================
+    print('segmenting nuclei...')
+    mask_nuclei = mask_image(dapi, min_size=100, block_size=101,
+                selem=skimage.morphology.disk(10))
+    nuclei_markers = skimage.measure.label(mask_nuclei)
+    # get centroids (so all bbox are same size). Dapi is most visible.
+    _seg_coords = pd.DataFrame([i.centroid for i in\
+        skimage.measure.regionprops(nuclei_markers, dapi)], columns=['y','x'])
+    _seg_coords['imname'] = imname
+    seg_coords = pd.concat((seg_coords, _seg_coords), ignore_index=True)
+
+    # make a segmentation image of raw + scaled masks
+    alpha = np.mean(dapi)/np.mean(mask_nuclei)*0.003
+    ims_dapi_clf[imname] = dapi + mask_nuclei*alpha
+
+#seg_coords.to_csv('../output/nuc_trainingset/20171201_nuclei_segment_centroids.csv', index=False)
+
+seg_coords = pd.read_csv('../output/nuc_trainingset/20171201_nuclei_segment_centroids.csv')
+ims_projected_dapi = load_ims(rrdir+'zprojected/', 'tif', channel=2)
+
+# select bad images (usually more good than bad)
+seg_coords_bk = _seg_coords.copy()
+_sel_seg_bk = _sel_seg.copy()
+_seg_ims_bk = _seg_ims.copy()
+_sel_seg, _seg_ims, _seg_coords = sel_training(seg_coords_bk, ims_projected_dapi,
+                    s=50, ncols=50, figsize=(25.6, 13.6), normall=True)
+_sel_seg, _seg_ims_mark, _seg_coords = sel_training(seg_coords_bk, ims_dapi_clf,
+                    s=50, ncols=50, figsize=(25.6, 13.6), normall=True)
+seg_coords_bk.to_csv('../output/nuc_trainingset/20171201_nuclei_segment_centroids_manualclass_firstpass.csv', index=False)
+
+plt.imshow(im_block(_seg_ims[seg_coords_bk['manual_sel']==True], 50, norm=0))
+plt.imshow(im_block(_seg_ims_mark[seg_coords_bk['manual_sel']==True], 50, norm=1))
+sel_ind = _seg_coords[~_sel_seg].index.values
+seg_coords_bk['manual_sel'] = seg_coords_bk.index.isin(sel_ind)
 
 #        # For visualization only
 #        blurred = skimage.filters.gaussian(fish)
