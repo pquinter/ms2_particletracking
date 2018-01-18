@@ -54,7 +54,7 @@ def segment_sel_nuc(im_nuclei, nuc_clf, imname='nuclei'):
 
 def segment_cellfromnuc(im_cells, nuclei_markers):
     """
-    Segment cells using labeled nuclei markers
+    Segment cells by reconstructing from nuclei markers using watershed
 
     Arguments
     ---------
@@ -65,16 +65,19 @@ def segment_cellfromnuc(im_cells, nuclei_markers):
 
     Returns
     ---------
-    cell_markers_enlarged: array
-        dilated cell markers; useful to catch things close to cell edge
     cell_markers, nuclei_markers: array
         only cells with nuclei and nuclei with cells
+        cell markers are dilated to keep particles close to edge.
     mask_cells, mask_nuclei: boolean array
         boolean masks
     """
 
     mask_cells = mask_image(im_cells, min_size=1000, block_size=151,
         selem=skimage.morphology.disk(15))
+    # enlarge mask to keep particles close to edge. Doing this before watershed
+    # prevents invasion into other cells and is faster, smart
+    mask_cells = skimage.morphology.binary_dilation(mask_cells,
+                                        selem=skimage.morphology.disk(10))
     cell_markers = skimage.measure.label(mask_cells)
     # watershed transform using nuclei as basins, also removes cells wo nucleus
     cell_markers = skimage.morphology.watershed(cell_markers,
@@ -86,11 +89,10 @@ def segment_cellfromnuc(im_cells, nuclei_markers):
     # ensure use of same labels for nuclei
     nuclei_markers  = mask_nuclei * cell_markers
 
-    # enlarge cell markers to keep particles close to edge
-    cell_markers_enlarged = skimage.morphology.dilation(cell_markers,
-                selem=skimage.morphology.disk(10))
+    # correct any invasion into neighboring nuclei?? Unsure how to do this
+    # seems to happen rarely, keep an eye out for it
 
-    return cell_markers_enlarged, cell_markers, nuclei_markers, mask_cells, mask_nuclei
+    return cell_markers, nuclei_markers, mask_cells, mask_nuclei
 
 rrdir = '../data/FISH/20171201/'
 ims_projected = load_ims(rrdir+'zprojected/', 'tif')
@@ -125,13 +127,10 @@ for imname in tqdm(ims_stack):
     # segment cells and nuclei ===========================================
     print('segmenting cells...')
 
-    # classify nuclei markers here
-    nuclei_markers = segment_sel_nuc(dapi, nuc_clf)
-    cell_markers_enlarged, cell_markers, nuclei_markers,\
-            mask_cells, mask_nuclei = segment_cellfromnuc(autof, nuclei_markers)
-    segmented_im = cell_markers_enlarged + mask_nuclei
-    io.imsave('../output/segmentation/{}_segmentation.tif'.format(imname),
-                                        skimage.img_as_int(segmented_im))
+    # get quality controlled nuclei and cell markers
+    cell_markers_enlarged, cell_markers, nuclei_markers,
+            mask_cells, mask_nuclei = sel_markers_dict[imname]
+
 
     # Identify peaks =========================================================
     # identify transcription particles, diameter of 3 works well
@@ -161,44 +160,108 @@ for imname in tqdm(ims_stack):
 peaks = peaks[(peaks.cell_label>0)].reset_index(drop=True)
 peaks.to_csv('../output/{}_smFishPeaks3D.csv'.format(rrdir.split('/')[-2]), index=False)
 
-
-# get nuclei centroid dataframe for manual selection of training set =========
+# =============================================================================
+# get nuclei centroid dataframe and nuclei markers for segmentation quality
+# control =====================================================================
 ims_projected_dapi = load_ims(rrdir+'zprojected/', 'tif', channel=2)
 seg_coords = pd.DataFrame()
-ims_dapi_clf = {}
+ims_dapi_seg = {}
+nuclei_markers_dict = {}
 for imname in tqdm(ims_projected_dapi):
     # get three-channel z-projected image
     print('analyzing {}'.format(imname))
     dapi = ims_projected_dapi[imname]
     # segment nuclei ===========================================
-    print('segmenting nuclei...')
+    print('making nuclei mask...')
     mask_nuclei = mask_image(dapi, min_size=100, block_size=101,
                 selem=skimage.morphology.disk(10))
     nuclei_markers = skimage.measure.label(mask_nuclei)
-    # get centroids (so all bbox are same size). Dapi is most visible.
-    _seg_coords = pd.DataFrame([i.centroid for i in\
-        skimage.measure.regionprops(nuclei_markers, dapi)], columns=['y','x'])
+    print('finding nuclei centers...')
+    nuc_centers = tp.locate(dapi, diameter=15, minmass=np.median(dapi)*50,
+            separation=15)
+    nuc_seeds = np.full_like(dapi, 0)
+    for i, (_, r) in enumerate(nuc_centers.iterrows(), 1):
+        nuc_seeds[int(r.y), int(r.x)] = i
+    print('watershed reconstruction from centers...')
+    # remove seeds not in nuclei mask
+    nuc_seeds = nuc_seeds * mask_nuclei
+    nuclei_markers = skimage.morphology.watershed(nuclei_markers,
+                                    nuc_seeds, mask=mask_nuclei)
+    # save markers image
+    nuclei_markers_dict[imname] = nuclei_markers
+    print('making segmentation image with highlighted boundaries...')
+    seg_im = dapi.copy()
+    seg_im[skimage.segmentation.find_boundaries(nuclei_markers)] = np.max(dapi)
+    ims_dapi_seg[imname] = seg_im
+
+    # get centroids (so all bbox are same size)
+    nuc_regionprops = skimage.measure.regionprops(nuclei_markers, dapi)
+    _seg_coords = regionprops2df(nuc_regionprops, props=('label', 'centroid'))
+    # add image name for sel_training func
     _seg_coords['imname'] = imname
     seg_coords = pd.concat((seg_coords, _seg_coords), ignore_index=True)
 
-    # make a segmentation image of raw + scaled masks
-    alpha = np.mean(dapi)/np.mean(mask_nuclei)*0.003
-    ims_dapi_clf[imname] = dapi + mask_nuclei*alpha
-
+# expand centroid into x, y coords
+seg_coords[['y','x']] = seg_coords.centroid.apply(pd.Series)
+# add cell id
+seg_coords['cid'] = seg_coords.apply(lambda x: x.imname+'_'+str(x.label), axis=1)
+import pickle
+with open('../output/nuc_trainingset/20171201_nuclei_segment_centroids_markers_segim.pkl', 'wb') as f:
+    pickle.dump(seg_coords, f)
+    pickle.dump(nuclei_markers_dict, f)
+    pickle.dump(ims_dapi_seg, f)
 #seg_coords.to_csv('../output/nuc_trainingset/20171201_nuclei_segment_centroids.csv', index=False)
 
-seg_coords = pd.read_csv('../output/nuc_trainingset/20171201_nuclei_segment_centroids.csv')
-ims_projected_dapi = load_ims(rrdir+'zprojected/', 'tif', channel=2)
+# =============================================================================
+# Manually clean nuclei markers
+# =============================================================================
+with open('../output/nuc_trainingset/20171201_nuclei_segment_centroids_markers_segim.pkl', 'rb') as f:
+    seg_coords = pickle.load(f)
+    nuclei_markers_dict = pickle.load(f)
+    ims_dapi_seg = pickle.load(f)
 
 # select bad images (usually more good than bad)
-seg_coords_bk = _seg_coords.copy()
-_sel_seg_bk = _sel_seg.copy()
-_seg_ims_bk = _seg_ims.copy()
-_sel_seg, _seg_ims, _seg_coords = sel_training(seg_coords_bk, ims_projected_dapi,
-                    s=50, ncols=50, figsize=(25.6, 13.6), normall=True)
-_sel_seg, _seg_ims_mark, _seg_coords = sel_training(seg_coords_bk, ims_dapi_clf,
-                    s=50, ncols=50, figsize=(25.6, 13.6), normall=True)
-seg_coords_bk.to_csv('../output/nuc_trainingset/20171201_nuclei_segment_centroids_manualclass_firstpass.csv', index=False)
+_sel_seg, seg_ims, seg_coords = sel_training(seg_coords, ims_dapi_seg,
+                    s=50, ncols=50, figsize=(25.6, 13.6), normall=1)
+seg_coords['is_nucleus'] = ~sel_seg
+plt.imshow(im_block(seg_ims[~sel_seg], 50, norm=0))
+
+ims_proj_autof = load_ims(rrdir+'zprojected/', 'tif', channel=1)
+sel_markers_dict = {}
+# remove incorrect segmentation instances and make cell markers
+for imname, _seg_coords in seg_coords.groupby('imname'):
+    nuclei_markers = nuclei_markers_dict[imname].copy()
+    cell_markers, nuclei_markers, mask_cells, mask_nuclei =\
+            segment_cellfromnuc(ims_proj_autof[imname], nuclei_markers)
+    # Remove crap markers. Has to be done after getting cell markers to
+    # prevent invasion into non selected cells
+    for crap_label in _seg_coords[_seg_coords.is_nucleus==False].label.values:
+        cell_markers[np.where(np.isclose(cell_markers,crap_label))] = 0
+        nuclei_markers[np.where(np.isclose(nuclei_markers,crap_label ))] = 0
+    sel_markers_dict[imname] = cell_markers, nuclei_markers
+
+    # make a segmentation image with highlighted boundaries
+    seg_im = ims_projected_dapi[imname].copy()
+    seg_im[skimage.segmentation.find_boundaries(cell_markers)] = np.max(seg_im)
+    seg_im[skimage.segmentation.find_boundaries(nuclei_markers)] = np.max(seg_im)
+    io.imsave('../output/segmentation/{}_segmentation.tif'.format(imname),
+                                        skimage.img_as_int(seg_im))
+
+with open('../output/nuc_trainingset/20171201_manualsel_nuclei_segment_centroids_markers_segim.pkl', 'wb') as f:
+    pickle.dump(seg_coords, f)
+    pickle.dump(sel_markers_dict, f)
+
+
+# =============================================================================
+
+fig, axes = plt.subplots(1, 4, sharex=True, sharey=True)
+axes[0].imshow(cell_markers, cmap='tab20')
+axes[1].imshow(cell_markers-nuclei_markers, cmap='tab20')
+axes[2].imshow(nuclei_markers, cmap='tab20')
+axes[3].imshow(ims_projected_dapi[imname])
+
+#seg_coords.to_csv('../output/nuc_trainingset/20171201_nuclei_segment_centroids_manualclass_firstpass.csv', index=False)
+seg_coords = pd.read_csv('../output/nuc_trainingset/20171201_nuclei_segment_centroids_manualclass_firstpass.csv')
 
 plt.imshow(im_block(_seg_ims[seg_coords_bk['manual_sel']==True], 50, norm=0))
 plt.imshow(im_block(_seg_ims_mark[seg_coords_bk['manual_sel']==True], 50, norm=1))
