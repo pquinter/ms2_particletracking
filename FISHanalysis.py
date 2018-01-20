@@ -128,9 +128,8 @@ for imname in tqdm(ims_stack):
     print('segmenting cells...')
 
     # get quality controlled nuclei and cell markers
-    cell_markers_enlarged, cell_markers, nuclei_markers,
-            mask_cells, mask_nuclei = sel_markers_dict[imname]
 
+    cell_markers, nuclei_markers = sel_markers_dict[imname]
 
     # Identify peaks =========================================================
     # identify transcription particles, diameter of 3 works well
@@ -145,7 +144,7 @@ for imname in tqdm(ims_stack):
     ## Assign transcripts to cells ====================================================
     ## Get cell label
     #_parts['cell_label'] = _parts.apply(lambda coords:\
-    #        cell_markers_enlarged[int(coords.y), int(coords.x)], axis=1)
+    #        cell_markers[int(coords.y), int(coords.x)], axis=1)
     ## Get nuclear label
     #_parts['nuc_label'] = _parts.apply(lambda coords:\
     #        nuclei_markers[int(coords.y), int(coords.x)], axis=1)
@@ -221,15 +220,25 @@ with open('../output/nuc_trainingset/20171201_nuclei_segment_centroids_markers_s
     ims_dapi_seg = pickle.load(f)
 
 # select bad images (usually more good than bad)
-_sel_seg, seg_ims, seg_coords = sel_training(seg_coords, ims_dapi_seg,
-                    s=50, ncols=50, figsize=(25.6, 13.6), normall=1)
-seg_coords['is_nucleus'] = ~sel_seg
-plt.imshow(im_block(seg_ims[~sel_seg], 50, norm=0))
+ims_proj_autof = load_ims(rrdir+'zprojected/', 'tif', channel=1)
+ims_proj_fish = load_ims(rrdir+'zprojected/', 'tif', channel=0)
+# merge dapi + autof
+ims_dapiautof_merge = {}
+ims_fishdapiautof_merge = {}
+for k in ims_dapi_seg:
+    ims_dapiautof_merge[k] = ims_dapi_seg[k]+ims_proj_autof[k]*3
+    ims_fishdapiautof_merge[k] = ims_dapi_seg[k]+ims_proj_autof[k]*3+ims_proj_fish[k]
+
+sel_seg, seg_ims, seg_coords = sel_training(seg_coords, ims_dapiautof_merge,
+                    s=100, ncols=50, figsize=(25.6, 13.6), normall=1)
+seg_coords['is_nucleus'] = ~_sel_seg
+plt.imshow(im_block(seg_ims[~_sel_seg], 50, norm=0))
 
 ims_proj_autof = load_ims(rrdir+'zprojected/', 'tif', channel=1)
 sel_markers_dict = {}
 # remove incorrect segmentation instances and make cell markers
-for imname, _seg_coords in seg_coords.groupby('imname'):
+for imname, _seg_coords in tqdm(seg_coords.groupby('imname')):
+    print('analyzing {}'.format(imname))
     nuclei_markers = nuclei_markers_dict[imname].copy()
     cell_markers, nuclei_markers, mask_cells, mask_nuclei =\
             segment_cellfromnuc(ims_proj_autof[imname], nuclei_markers)
@@ -241,7 +250,8 @@ for imname, _seg_coords in seg_coords.groupby('imname'):
     sel_markers_dict[imname] = cell_markers, nuclei_markers
 
     # make a segmentation image with highlighted boundaries
-    seg_im = ims_projected_dapi[imname].copy()
+    # using 3channel merged image
+    seg_im = ims_fishdapiautof_merge[imname].copy()
     seg_im[skimage.segmentation.find_boundaries(cell_markers)] = np.max(seg_im)
     seg_im[skimage.segmentation.find_boundaries(nuclei_markers)] = np.max(seg_im)
     io.imsave('../output/segmentation/{}_segmentation.tif'.format(imname),
