@@ -103,38 +103,22 @@ axes[1].imshow(np.clip(im_block(ims_raw, 50, norm=0), 0, 10000), cmap='viridis')
 # manual Quality Assurance
 spot_df['pid'] = spot_df.apply(lambda x: str(int(x.x))+str(int(x.y))+x.imname, axis=1)
 mrna_qa = spot_df[(spot_df.svm_label.isin(['crap']))].sort_values(['corrwideal']).copy()
-ind_mrna, ims_mrnaqa, mrna_qa_ = sel_training(mrna_qa, ims_proj, ncols=200, scale=1, mark_center=0, s=9, cmap='viridis')
+ind_mrna, ims_mrnaqa, mrna_qa_ = sel_training(mrna_qa, ims_proj, ncols=200, normall=1, mark_center=0, s=9, cmap='viridis')
 # create new label for these in each round: crap_mrna, crap_mrna2...
 spot_df.loc[spot_df.pid.isin(mrna_qa[ind_mrna].pid), 'svm_label'] = 'crap_TS'
 
-# compute correlation to an ideal spot: point source with gaussian of PSF width
-# get all 3d images
-ims_stack = load_ims(rrdir+'zstacks/', 'STK')
-# get all spot images
-allims = get_batch_bbox(spot_df, ims_stack, 9, im3d=True, size_z='Full')
-
-#allims = get_batch_bbox(spot_df, ims_proj)
-idealspot = np.full((9,9,9), 0)
-idealspot[4,4,4] = 1 # single light point source
-idealspot = skimage.filters.gaussian(idealspot, sigma=4.2) # PFS width blur
-# compute pearson corr; very similar result obtained with spearmanr
-#allcorrs = [np.corrcoef(idealspot.ravel(), im.ravel())[1][0] for im in allims]
-allcorrs = []
-allcorrs_s = []
-# do try/except bcause of different z-depths
-for im in allims:
-    idealspot = np.full_like(im, 0)
-    center = (idealspot.shape[0]//2,idealspot.shape[1]//2,idealspot.shape[2]//2)
-    idealspot[center] = 1 # single light point source
-    idealspot = skimage.filters.gaussian(idealspot, sigma=4.2) # PFS width blur
-    allcorrs_s.append(scipy.stats.spearmanr(idealspot.ravel(), im.ravel())[0])
-    allcorrs.append(np.corrcoef(idealspot.ravel(), im.ravel())[1][0])
+# compute correlation to an ideal spot: point source blurred with gaussian of PSF width
+allims = get_batch_bbox(spot_df, ims_proj)
+idealspot = np.full((9,9), 0)
+idealspot[4,4] = 1 # single light point source
+idealspot = skimage.filters.gaussian(idealspot, sigma=4.2) # PSF width blur
+# pearson corr; tried spearman and 3d Corr, pearson on 3d proj is best
+allcorrs = [np.corrcoef(idealspot.ravel(), im.ravel())[1][0] for im in allims]
 spot_df['corrwideal'] = allcorrs
-spot_df['corrwideal_s3d'] = allcorrs_s
 
 fig, ax = plt.subplots(1)
 for l in spot_df.svm_label.unique():
-    plot_ecdf(spot_df[spot_df.svm_label==l].corrwideal_s3d, label=l, ax=ax)
+    plot_ecdf(spot_df[spot_df.svm_label==l].corrwideal, label=l, ax=ax)
 plt.legend()
 
 # do it in steps
@@ -220,7 +204,7 @@ spot_df['strain'] = spot_df.imname.apply(lambda x: x.split('FISH')[0])
 spot_df['cid'] = spot_df.apply(lambda x: x.imname+'_'+str(x.cell_label), axis=1)
 spot_df['nid'] = spot_df.apply(lambda x: x.imname+'_'+str(x.nuc_label), axis=1)
 # remove false spots and spots outside cells
-spot_df_mrnas = spot_df[(spot_df.svm_label.isin(['mrna', 'TS']))&(spot_df.cell_label>0)]
+spot_df_mrnas = spot_df[(spot_df.svm_label.isin(['TS']))&(spot_df.cell_label>0)]
 
 # count transcripts by cell
 transcripts_bycell = spot_df_mrnas.groupby('cid').no_mrnas.sum().reset_index()
