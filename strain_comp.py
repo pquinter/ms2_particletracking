@@ -14,203 +14,25 @@ from im_utils import *
 ## put strain name in new column
 #spot_df['strain'] = spot_df.imname.apply(lambda x: x.split('FISH')[0])
 
-# load classifier
-with open('../output/spot_trainingset/clf_beta1_size9NormedNotSmooth.pkl', 'rb') as f:
-    clf = pickle.load(f)
-
-# load spots df
-spot_df = pd.read_csv('../output/{}_smFishPeaks3D.csv'.format('20171201'))
-spot_df['strain'] = spot_df.imname.apply(lambda x: x.split('FISH')[0])
-# Get images
-rrdir = '../data/FISH/20171201/'
-ims_proj = load_ims(rrdir+'zprojected/', 'tif', channel=0)
-# clear peaks near border
-size=9
-spot_df_ = spot_df[spot_df.apply(lambda x: check_borders(x[['x','y']],
-                    ims_proj[x.imname], size), axis=1)].reset_index(drop=True)
-# get spot images
-spot_ims = get_batch_bbox(spot_df, ims_proj, size=size)
-# normalize and ravel for classification
-spot_ims  = normalize_im(spot_ims)
-spot_ims = np.stack([np.ravel(i) for i in spot_ims])
-# classify
-labels_pred = clf.predict(spot_ims)
-# add labels
-spot_df['svm_label'] = labels_pred
 # discard bad samples (seems like didn't wash so well, in edge of coverslip)
 #spot_df = spot_df[~spot_df.imname.isin(('67f1FISHGal10PP7_s13', '664FISHGal10PP7_s10'))]
 
-#========================================================================
-# Quantify transcripts per TS
-#========================================================================
-# get all 3d images
-ims_stack = load_ims(rrdir+'zstacks/', 'STK')
-
-# get all spot images
-#ts_df = spot_df[spot_df.svm_label=='TS'].copy().reset_index(drop=True)
-spot_df = pd.read_csv('../output/{}_smFishPeaks3D.csv'.format('20171201'))
-ts_ims = get_batch_bbox(spot_df, ims_stack, wsize, im3d=True, size_z='Full')
-# convert to float for regression
-ts_ims_float = [skimage.img_as_float(im) for im in ts_ims]
-
-# Dataframe to store optimized params and error bars by field of view
-popt_all = pd.DataFrame()
-# Initial guesses for regression. Center is roughly center of image.
-# Params are: r, a, bx, by, bz, cx, cy, cz
-# r is offset, a is coeff, b are center coord, c are sigmas
-p0 = (np.median(np.concatenate([i.ravel() for i in ts_ims_float])), 0.05, *((wsize/2),)*3, 2, 2, 2)
-# Parameter bounds, the same for all b's and c's
-p_range = ((0,1), (0, 1), *((0, wsize),)*6)
-for i, ts_im in tqdm(enumerate(ts_ims_float)):
-    try: #minimizing the negative log posterior
-        _popt, _err =  imstack_gauss3d_regress(ts_im, p0, p_range)
-    except: #least of squares is more robust
-        try:
-            _popt =  imstack_gauss3d_regress(ts_im, p0, leastsq=1)
-        except:
-            _popt = np.full_like(p0, np.nan)
-    # Add to dataframe
-    _popt_df = pd.DataFrame(_popt).T
-    popt_all = pd.concat((popt_all, _popt_df), ignore_index=True)
-popt_all.columns = ('r', 'a', 'bx', 'by', 'bz','cx','cy','cz')
-popt_all_cols = ['r', 'a', 'bx', 'by', 'bz','cx','cy','cz']
-popt_all = spot_df[popt_all_cols]
-
-# check fits
-#popt_all = spot_df[['r', 'a', 'bx', 'by', 'bz', 'cx', 'cy', 'cz']].copy().reset_index(drop=True)
-wsize=9
-X = np.array([d.ravel() for d in np.indices((wsize, wsize, wsize))])
-ts_ims_fit = np.stack([gauss3d(X, im[1]).reshape((-1, wsize, wsize)) for im in popt_all.iterrows()])
-fit_ints = popt_all.apply(lambda x: gauss3d(X, x).sum() - x.r*wsize**3, axis=1)
-spot_df['gauss_int'] = fit_ints
-# best to sort are: cx/yz, a, bx, by
-#sortind = spot_df.sort_values(['no_mrnas']).index
-sortind = spot_df[(spot_df.svm_label.isin(['mrna','TS']))].sort_values(['mass']).index
-ims_fit = np.stack([z_project(im) for im in ts_ims_fit[sortind]])
-#ims_raw = np.stack([z_project(im) for im in ts_ims])[sortind]
-ims_raw = np.stack([im for im in spot_ims])[sortind]
-
-fig, axes = plt.subplots(1, 2, sharex=True, sharey=True)
-axes[0].imshow(im_block(ims_fit, 60, norm=0), cmap='viridis')
-axes[1].imshow(im_block(ims_raw, 60, norm=0), cmap='viridis')
-plt.tight_layout()
-
-fig, axes = plt.subplots(1, 2, sharex=True, sharey=True)
-#axes[0].imshow(im_block(ims_fit, 150, norm=0), cmap='viridis')
-axes[0].imshow(np.clip(im_block(ims_fit, 50, norm=0), 0, 0.005), cmap='viridis')
-axes[1].imshow(np.clip(im_block(ims_raw, 50, norm=0), 0, 10000), cmap='viridis')
-
-# manual Quality Assurance
-spot_df['pid'] = spot_df.apply(lambda x: str(int(x.x))+str(int(x.y))+x.imname, axis=1)
-mrna_qa = spot_df[(spot_df.svm_label.isin(['crap']))].sort_values(['corrwideal']).copy()
-ind_mrna, ims_mrnaqa, mrna_qa_ = sel_training(mrna_qa, ims_proj, ncols=200, normall=1, mark_center=0, s=9, cmap='viridis')
-# create new label for these in each round: crap_mrna, crap_mrna2...
-spot_df.loc[spot_df.pid.isin(mrna_qa[ind_mrna].pid), 'svm_label'] = 'crap_TS'
-
-# compute correlation to an ideal spot: point source blurred with gaussian of PSF width
-allims = get_batch_bbox(spot_df, ims_proj)
-idealspot = np.full((9,9), 0)
-idealspot[4,4] = 1 # single light point source
-idealspot = skimage.filters.gaussian(idealspot, sigma=4.2) # PSF width blur
-# pearson corr; tried spearman and 3d Corr, pearson on 3d proj is best
-allcorrs = [np.corrcoef(idealspot.ravel(), im.ravel())[1][0] for im in allims]
-spot_df['corrwideal'] = allcorrs
-
-fig, ax = plt.subplots(1)
-for l in spot_df.svm_label.unique():
-    plot_ecdf(spot_df[spot_df.svm_label==l].corrwideal, label=l, ax=ax)
-plt.legend()
-
-# do it in steps
-mrna_qa = spot_df[(spot_df.svm_label.isin(['crap']))].sort_values(['cx']).copy()
-ind_r, ims_r, mrna_qa_ = [], [], pd.DataFrame()
-step = 2000
-for n in np.arange(step, len(mrna_qa)+step, step):
-    _ind_mrna, _ims_mrnaqa, _mrna_qa = sel_training(mrna_qa[n-step:n],
-        ims_proj, ncols=60, mark_center=0, s=9, cmap='viridis', normall=1)
-    print(n-step, n)
-    ind_r.append(_ind_mrna)
-    ims_r.append(_ims_mrnaqa)
-    mrna_qa_ = pd.concat((mrna_qa_, _mrna_qa), ignore_index=True)
-ind_r = np.concatenate(ind_r)
-# create new label for these in each round: crap_mrna, crap_mrna2...
-spot_df.loc[spot_df.pid.isin(mrna_qa_[ind_r].pid), 'svm_label'] = 'former_crap'
-
-
-
-# compute TS intensities; substract background by substracting offset ('r')
-fit_ints = popt_all.apply(lambda x: gauss3d(X, x).sum() - x.r*wsize**3, axis=1)
-
-# compute average mRNA intensity using good-bad data model
-mrna_ind = spot_df.svm_label=='mrna'
-mrna_int = fit_ints[mrna_ind]
-with pm.Model() as model:
-    # Priors
-    mu = pm.Uniform('mu', 0, 10)
-    sigma = bebi103.pm.Jeffreys('sigma', 0.1, 1)
-    sigma_bad = bebi103.pm.Jeffreys('sigma_bad', sigma, 10)
-    w = pm.Beta('w', alpha=0.5, beta=0.5, shape=len(mrna_int))
-    # Likelihood is good-bad data model.
-    a_obs = bebi103.pm.GoodBad('a_obs',
-                               mu=mu,
-                               sigma=sigma,
-                               sigma_bad=sigma_bad,
-                               w=w,
-                               observed=mrna_int)
-    trace_goodbad = pm.sample(draws=2000, tune=2000, njobs=4)
-
-df_mcmc = bebi103.pm.trace_to_dataframe(trace_goodbad)
-# get prob of being bad (high w -> bad, low w -> good)
-wcols = [c for c in df_mcmc.columns if 'w_' in c]
-w = np.median(df_mcmc[wcols].values, axis=0)
-plt.figure()
-corner.corner(df_mcmc[['mu', 'sigma', 'sigma_bad']])
-# smaller valued intensities have higher prob of being bad
-plt.scatter(w, mrna_int, s=10, alpha=0.2)
-# add bad prob and filter
-mrna_int['w_bad'] = w
-mrna_int_good = mrna_int[(mrna_int['w_bad']<0.2)]
-
-
-# compute mrnas per TS and add to DF
-mrnas = fit_ints/mrna_fit_int
-
-spot_df = pd.concat((spot_df, popt_all), axis=1)
 #TODO:
-#spot_df.to_csv('../output/mrnaquant_20171201_succesfulRegressFloatFullZ.csv', index=False)
-spot_df = pd.read_csv('../output/mrnaquant_20171201_succesfulRegressFloatFullZ.csv')
 
 #spot_df['mrnas'] = mrnas
 #spot_df['mrnas'] = spot_df.mass / mrna_df.mass.median()
 #ints = spot_df.apply(lambda x: gauss3d(X, (0, x.a, x.bx, x.by, x.bz, x.cx, x.cy, x.cz)).sum(), axis=1)
-smrna_int = spot_df[spot_df.svm_label=='mrna'].gauss_int.median()
-smrna_mass = spot_df[spot_df.svm_label=='mrna'].mass.median()
-spot_df['no_mrnas'] = np.round(spot_df.gauss_int/smrna_int)
-spot_df['no_mrnas'] = np.round(spot_df.mass/smrna_mass)
-spot_df.loc[(spot_df.no_mrnas<1), 'no_mrnas'] = 1
 
-with open('../output/nuc_trainingset/20171201_manualsel_nuclei_segment_centroids_markers_segim.pkl', 'rb') as f:
-    seg_coords = pickle.load(f)
-    sel_markers_dict = pickle.load(f)
-
-# update cell labels
-spot_df['cell_label'] = spot_df.apply(lambda coords:\
-    sel_markers_dict[coords.imname][0][int(coords.y), int(coords.x)], axis=1)
-# Get nuclear label
-spot_df['nuc_label'] = spot_df.apply(lambda coords:\
-    sel_markers_dict[coords.imname][1][int(coords.y), int(coords.x)], axis=1)
-
-spot_df['strain'] = spot_df.imname.apply(lambda x: x.split('FISH')[0])
-spot_df['cid'] = spot_df.apply(lambda x: x.imname+'_'+str(x.cell_label), axis=1)
-spot_df['nid'] = spot_df.apply(lambda x: x.imname+'_'+str(x.nuc_label), axis=1)
+spot_df = pd.read_csv('../output/mrnaquant_20171201_succesfulRegressFloatFullZ.csv')
 # remove false spots and spots outside cells
-spot_df_mrnas = spot_df[(spot_df.svm_label.isin(['TS']))&(spot_df.cell_label>0)]
+spot_df_mrnas = spot_df[(spot_df.svm_label.isin(['mrna', 'TS']))&(spot_df.cell_label>0)]
 
 # count transcripts by cell
 transcripts_bycell = spot_df_mrnas.groupby('cid').no_mrnas.sum().reset_index()
 transcripts_bycell['strain']  = transcripts_bycell.cid.apply(lambda x: x.split('FISH')[0])
 
 # get empty cells
+# TODO: empty cells should now be in spot_df dataframe
 seg_coords['strain']  = seg_coords.imname.apply(lambda x: x.split('FISH')[0])
 cellnums = seg_coords.groupby('strain').is_nucleus.sum().reset_index()
 cells_wrna = transcripts_bycell.groupby('strain').no_mrnas.count().reset_index()
