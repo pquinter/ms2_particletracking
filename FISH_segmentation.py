@@ -44,13 +44,17 @@ for imname in tqdm(ims_projected):
     ims_seg[imname] = make_seg_im((cell_markers, nuclei_markers),
         dapi + autof*3 + fish) # enhanced autof because its dimmer than others
 
-    # update nuclei centers dataframe ===========================================
-    nuc_centers['label'] = nuc_centers.apply(lambda coords:\
-            nuclei_markers[int(coords.y), int(coords.x)], axis=1)
-    _seg_coords = nuc_centers[(nuc_centers.label>0)].reset_index(drop=True)
+    # make nuclei centers dataframe ===========================================
+    # get centroids (so all bbox are same size)
+    nuc_regionprops = skimage.measure.regionprops(nuclei_markers, dapi)
+    _seg_coords = regionprops2df(nuc_regionprops, props=('label', 'centroid', 'mean_intensity', 'area'))
     # add image name for sel_training func
     _seg_coords['imname'] = imname
     seg_coords = pd.concat((seg_coords, _seg_coords), ignore_index=True)
+
+# expand centroid into x, y coords
+seg_coords[['y','x']] = seg_coords.centroid.apply(pd.Series)
+
 # add cell id
 seg_coords['cid'] = seg_coords.apply(lambda x: x.imname+'_'+str(x.label), axis=1)
 
