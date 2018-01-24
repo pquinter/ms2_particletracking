@@ -7,22 +7,29 @@ import pickle
 from im_utils import *
 
 # =============================================================================
-# Manually clean nuclei markers
+# Manually clean cell and nuclei markers
 # =============================================================================
-with open('../output/nuc_trainingset/20171201_nuclei_segment_centroids_markers_segim.pkl', 'rb') as f:
+with open('../output/pipeline/20171201_nuclei_segment_centroids_markers_segim.pkl', 'rb') as f:
     seg_coords = pickle.load(f)
     markers_dict = pickle.load(f)
-    ims_seg = pickle.load(f)
+    ims_seg_dict = pickle.load(f)
 
 # Select crap markers
-sel_seg, seg_ims, seg_coords = sel_training(seg_coords, ims_seg,
-                            s=100, ncols=50, figsize=(25.6, 13.6), normall=1)
-seg_coords['is_nucleus'] = ~_sel_seg
-plt.imshow(im_block(seg_ims[~_sel_seg], 50, norm=0))
+sel_ind, seg_ims, seg_coords_ = [], [], pd.DataFrame()
+step = 200
+for n in np.arange(step, len(seg_coords)+step, step):
+    _ind, _ims, _seg_coords = sel_training(seg_coords[n-step:n], ims_seg_dict,
+                        s=100, ncols=20, figsize=(25.6, 13.6), normall=1)
+    sel_ind.append(_ind)
+    seg_ims.append(_ims)
+    seg_coords_ = pd.concat((seg_coords_, _seg_coords), ignore_index=True)
+sel_ind = np.concatenate(sel_ind)
+seg_coords_['is_nucleus'] = ~sel_ind
+#plt.imshow(im_block(np.concatenate(seg_ims)[sel_ind], 5, norm=1))
 
 # Remove crap markers and update segmentation
 sel_markers_dict = {}
-for imname, _seg_coords in seg_coords.groupby('imname'):
+for imname, _seg_coords in seg_coords_.groupby('imname'):
     cell_markers, nuclei_markers = markers_dict[imname]
     for crap_label in _seg_coords[_seg_coords.is_nucleus==False].label.values:
         cell_markers[np.where(np.isclose(cell_markers,crap_label))] = 0

@@ -49,20 +49,22 @@ wsize=9
 X = np.array([d.ravel() for d in np.indices((wsize, wsize, wsize))])
 spot_ims_fit = np.stack([gauss3d(X, im[1]).reshape((-1, wsize, wsize)) for im in popt_all.iterrows()])
 # best to sort are: cx/yz, a, bx, by
-#sortind = spot_df.sort_values(['no_mrnas']).index
-sortind = spot_df[(spot_df.svm_label.isin(['mrna','TS']))].sort_values(['mass']).index
-ims_fit = np.stack([z_project(im) for im in spot_ims_fit[sortind]])
+spot_df['test'] = spot_df.corrwideal * spot_df.mass
+sortind = spot_df[spot_df.corrwideal>0].sort_values(['corrwideal']).index
+#sortind = spot_df[(spot_df.svm_label.isin(['mrna','TS']))].sort_values(['corrwideal']).index
+#ims_fit = np.stack([z_project(im) for im in spot_ims_fit[sortind]])
+ims_fit = allcrosscorrs[sortind]
 #ims_raw = np.stack([z_project(im) for im in spot_ims])[sortind]
 ims_raw = np.stack([im for im in spot_ims])[sortind]
 
 fig, axes = plt.subplots(1, 2, sharex=True, sharey=True)
-axes[0].imshow(im_block(ims_fit, 60, norm=0), cmap='viridis')
-axes[1].imshow(im_block(ims_raw, 60, norm=0), cmap='viridis')
+axes[0].imshow(im_block(ims_fit, 100, norm=0), cmap='viridis')
+axes[1].imshow(im_block(ims_raw, 100, norm=1), cmap='viridis')
 plt.tight_layout()
 
 fig, axes = plt.subplots(1, 2, sharex=True, sharey=True)
 axes[0].imshow(np.clip(im_block(ims_fit, 50, norm=0), 0, 0.005), cmap='viridis')
-axes[1].imshow(np.clip(im_block(ims_raw, 50, norm=0), 0, 10000), cmap='viridis')
+axes[1].imshow(np.clip(im_block(ims_raw, 50, norm=0), 0, 500), cmap='viridis')
 
 # compute correlation to an ideal spot: point source blurred with gaussian of PSF width
 allims = get_batch_bbox(spot_df, ims_proj)
@@ -70,27 +72,41 @@ idealspot = np.full((9,9), 0)
 idealspot[4,4] = 1 # single light point source
 idealspot = skimage.filters.gaussian(idealspot, sigma=4.2) # PSF width blur
 # pearson corr; tried spearman and 3d Corr, pearson on 3d proj is best
-allcorrs = [np.corrcoef(idealspot.ravel(), im.ravel())[1][0] for im in allims]
+allcorrs = np.array([np.corrcoef(idealspot.ravel(), im.ravel())[1][0] for im in allims])
+
+allimsnorm = [(im - np.mean(im)) / (np.std(im)) for im in allims]
+idealspotnorm = (idealspot - np.mean(idealspot)) / (np.std(idealspot * np.multiply(*idealspot.shape)))
+allcrosscorrs = np.array([np.max(scipy.signal.correlate(idealspotnorm, im)) for im in allimsnorm])
+allcrosscorrs = np.array([scipy.signal.correlate(idealspotnorm, im) for im in allimsnorm])
 spot_df['corrwideal'] = allcorrs
+
+fig, ax = plt.subplots(1)
+for l in spot_df.svm_label.unique():
+    #    plot_ecdf(allcrosscorrs[spot_df.svm_label==l], label=l+'cross', ax=ax, formal=1, alpha=1)
+    #    plot_ecdf(allcorrs[spot_df.svm_label==l], label=l, ax=ax, formal=1, alpha=1)
+    plot_ecdf(spot_df[spot_df.svm_label==l].corrwideal, label=l, ax=ax, formal=1, alpha=1)
+plt.legend()
+
+
 
 
 # compute average mRNA intensity using good-bad data model
 # TODO: try correlation to ideal spot instead of intensities?
 mrna_ind = spot_df.svm_label=='mrna'
-mrna_int = fit_ints[mrna_ind]
+
 with pm.Model() as model:
     # Priors
-    mu = pm.Uniform('mu', 0, 10)
-    sigma = bebi103.pm.Jeffreys('sigma', 0.1, 1)
-    sigma_bad = bebi103.pm.Jeffreys('sigma_bad', sigma, 10)
-    w = pm.Beta('w', alpha=0.5, beta=0.5, shape=len(mrna_int))
+    mu = pm.Uniform('mu', -1, 1)
+    sigma = bebi103.pm.Jeffreys('sigma', 0.01, 0.5)
+    sigma_bad = bebi103.pm.Jeffreys('sigma_bad', sigma, 1)
+    w = pm.Beta('w', alpha=0.5, beta=0.5, shape=len(allcrosscorrs))
     # Likelihood is good-bad data model.
     a_obs = bebi103.pm.GoodBad('a_obs',
                                mu=mu,
                                sigma=sigma,
                                sigma_bad=sigma_bad,
                                w=w,
-                               observed=mrna_int)
+                               observed=allcrosscorrs)
     trace_goodbad = pm.sample(draws=2000, tune=2000, njobs=4)
 
 df_mcmc = bebi103.pm.trace_to_dataframe(trace_goodbad)

@@ -230,8 +230,8 @@ spot_train, spot_test, labels_train, labels_test = \
                                      random_state=42)
 #SVM with an RBF kernel, which takes two parameters, C
 # Find best pair of parameters and train
-C_range = np.logspace(-6, 1, 10)
-gamma_range = np.logspace(-6, 1, 10)
+C_range = np.logspace(-3, 1, 5)
+gamma_range = np.logspace(-3, 1, 5)
 param_grid = dict(gamma=gamma_range, C=C_range)
 clf = model_selection.GridSearchCV(svm.SVC(kernel='rbf', class_weight='balanced'),
                                    param_grid)
@@ -278,7 +278,7 @@ label_true_miscl = labels_test[miscl]
 label_pred_miscl = labels_pred[miscl]
 labels_cl = ['True:{0}'.format(str(l1),str(l2)) for (l1, l2) in zip(label_true_miscl, label_pred_miscl)]
 plt.figure()
-plot_gallery(spot_miscl, 1, 4, reshape=(9,9), titles=labels_cl)
+plot_gallery(spot_miscl, 1, 4, reshape=(51,51), titles=labels_cl)
 
 # get indices to randomly look at our predictions
 rows, cols = 10, 29

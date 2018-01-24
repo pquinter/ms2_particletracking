@@ -29,8 +29,13 @@ fig, ax = plt.subplots(1)
         for i in range(len(lburst))]
 plt.legend()
 #plt.hist(mrna_pcell, bins=100)
-plot_ecdf(compound_poisson(0.1, 2))
-plt.title('var freq')
+fig, axes= plt.subplots(2,2)
+axes = iter(np.ravel(axes))
+for i in (0.5, 1, 1.5, 2):
+    simul = compound_poisson(i, 2)
+    ax = next(axes)
+    plot_ecdf(simul, ax=ax)
+    ax.set_title('median:{0}, mean{1}'.format(np.median(simul), np.mean(simul)))
 
 def resid_cpoisson(p, y):
     lfreq, lburst = p

@@ -1,0 +1,8 @@
+segment nuclei (reconstruct from peaks)
+segment cells (reconstruct from nuclei)
+manually curate segmentation (weed out crap)
+identify candidate spots (peak detection, keep only inside cells)
+fit spots to 3D gaussian, compute intensity
+classify spots with SVM
+manually curate spots (weed out crap)
+identify outliers with good bad data model? correlation with ideal spot?

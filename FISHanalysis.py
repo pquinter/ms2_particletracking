@@ -21,66 +21,45 @@ from matplotlib import pyplot as plt
 
 rrdir = '../data/FISH/20171201/'
 ims_stack = load_ims(rrdir+'zstacks/', 'STK')
-
-# area and intensity limits
-maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,0.99), (15, 500), (20, 500), (500, 5000)
 # try it on a sample
 #sample = ['666FISHGal10PP7_s10', '666FISHGal10PP7_s9']
 
-cellnums, imnames = [], []
 # dataframe for single transcript peaks
 peaks = pd.DataFrame()
-seg_coords, seg_ims = pd.DataFrame(), ''
+seg_coords = pd.DataFrame()
 for imname in tqdm(ims_stack):
 #for imname in tqdm(sample):
-    #if imname in imnames: continue
-    # get three-channel z-projected image
-    print('analyzing {}'.format(imname))
-    im = ims_projected[imname]
-    # needed because had incomplete dataset
-    #try:
-    #    im = ims_projected[imname]
-    #except KeyError: continue
-    # split channels by color
-    fish = im[:,:,0] # smFISH channel
-    autof = im[:,:,1] # autofluorescent channel for cell segmentation
-    dapi = im[:,:,2] # Dapi/nuclear channel
-    # get zstack for FISH
     fish_stack = ims_stack[imname]
-
-    # segment cells and nuclei ===========================================
-    print('segmenting cells...')
-
     # get quality controlled nuclei and cell markers
-
     cell_markers, nuclei_markers = sel_markers_dict[imname]
 
     # Identify peaks =========================================================
     # identify transcription particles, diameter of 3 works well
     # this params seem to work decently to identify single transcripts
     # Imaging params: LeicaImagingFacility, 100%int 300msExp 0.2uZstack
-    #_parts = tp.locate(fish, 3, minmass=45)
     # for 3D, below seems to work well
     print('identifying peaks...')
-    #_parts = tp.locate(fish_stack, 9, minmass=1000)
-    #_parts['imname'] = imname
+    _parts = tp.locate(fish_stack, 9, minmass=1000)
+    _parts['imname'] = imname
+    # Get total number of cells identified; 0 is background
+    _parts['cell_number'] = len(np.unique(cell_markers)) - 1
 
-    ## Assign transcripts to cells ====================================================
-    ## Get cell label
-    #_parts['cell_label'] = _parts.apply(lambda coords:\
-    #        cell_markers[int(coords.y), int(coords.x)], axis=1)
-    ## Get nuclear label
-    #_parts['nuc_label'] = _parts.apply(lambda coords:\
-    #        nuclei_markers[int(coords.y), int(coords.x)], axis=1)
-    ## Get total number of cells identified; cells without mRNA matter too
-    #_parts['cell_number'] = len(np.unique(cell_markers))
+    # Assign transcripts to cells ====================================================
+    # Get cell label
+    _parts['cell_label'] = _parts.apply(lambda coords:\
+            cell_markers[int(coords.y), int(coords.x)], axis=1)
+    # Get nuclear label
+    _parts['nuc_label'] = _parts.apply(lambda coords:\
+            nuclei_markers[int(coords.y), int(coords.x)], axis=1)
 
-    #peaks = pd.concat((peaks, _parts))
-
+    peaks = pd.concat((peaks, _parts))
     print('done')
 
 # filter peaks that are not in cells. If label>0, it is inside cell.
 peaks = peaks[(peaks.cell_label>0)].reset_index(drop=True)
+peaks['strain'] = peaks.imname.apply(lambda x: x.split('FISH')[0])
+peaks['cid'] = peaks.apply(lambda x: x.imname+'_'+str(x.cell_label), axis=1)
+peaks['nid'] = peaks.apply(lambda x: x.imname+'_'+str(x.nuc_label), axis=1)
 peaks.to_csv('../output/{}_smFishPeaks3D.csv'.format(rrdir.split('/')[-2]), index=False)
 
 # =============================================================================

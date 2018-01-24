@@ -15,7 +15,7 @@ from im_utils import *
 rrdir = '../data/FISH/20171201/'
 ims_projected = load_ims(rrdir+'zprojected/', 'tif')
 seg_coords, ims_seg , markers_dict = pd.DataFrame(), {}, {}
-for imname in tqdm(ims_projected_dapi):
+for imname in tqdm(ims_projected):
     print('analyzing {}'.format(imname))
     im = ims_projected[imname]
     fish = im[:,:,0] # smFISH channel
@@ -55,7 +55,7 @@ for imname in tqdm(ims_projected_dapi):
 seg_coords['cid'] = seg_coords.apply(lambda x: x.imname+'_'+str(x.label), axis=1)
 
 # pickle everything
-with open('../output/nuc_trainingset/20171201_nuclei_segment_centroids_markers_segim.pkl', 'wb') as f:
+with open('../output/pipeline/20171201_nuclei_segment_centroids_markers_segim.pkl', 'wb') as f:
     pickle.dump(seg_coords, f)
     pickle.dump(markers_dict, f)
     pickle.dump(ims_seg, f)
