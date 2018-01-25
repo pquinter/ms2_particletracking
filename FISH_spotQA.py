@@ -64,7 +64,7 @@ spot_df['w_goodbad'] = w
 # label based on good and bad model weight and correlation with ideal
 spot_df['gb_label'] = ''
 spot_df.loc[(spot_df.w_goodbad>0.5), 'gb_label'] = 'mrna'
-single_mrna = spot_df[spot_df.svm_label=='mrna'].median()
+single_mrna = df_mcmc.mu.median()
 # crap: bad weight, low intensity
 spot_df.loc[(spot_df.w_goodbad<0.5)&(spot_df.gauss_int<single_mrna), 'gb_label'] = 'crap'
 # TS: bad weight, high intensity
@@ -81,10 +81,17 @@ ind_mrna, ims_mrnaqa, mrna_qa_ = sel_training(mrna_qa, ims_proj, ncols=200,
 # create new label for these in each round: crap_mrna, crap_mrna2...
 spot_df.loc[spot_df.pid.isin(mrna_qa[ind_mrna].pid), 'svm_label'] = 'crap_TS'
 
-# quantify mrnas in TS
-smrna_int = spot_df[spot_df.svm_label=='mrna'].gauss_int.median()
+# convert intensity to number of molecules
 smrna_mass = spot_df[spot_df.svm_label=='mrna'].mass.median()
-spot_df['no_mrnas_fit'] = np.round(spot_df.gauss_int/smrna_int)
+spot_df['no_mrnas_fit'] = 0
+spot_df.loc[spot_df.gb_label=='mrna', 'no_mrnas_fit'] = 1
+spot_df.loc[spot_df.gb_label=='TS', 'no_mrnas_fit'] = np.round(spot_df.gauss_int/single_mrna)
 spot_df['no_mrnas_mass'] = np.round(spot_df.mass/smrna_mass)
+spot_df.loc[spot_df.gb_label=='mrna', 'no_mrnas_mass'] = 1
+fig, ax = plt.subplots(1)
+plot_ecdf(spot_df.no_mrnas_mass, label='mass', ax=ax, formal=1, alpha=1)
+plot_ecdf(spot_df.no_mrnas_fit, label='fit', ax=ax, formal=1, alpha=1)
+plot_ecdf(spot_df[spot_df.svm_label=='TS'].no_mrnas_fit, label='fit', ax=ax, formal=1, alpha=1)
+plt.legend()
 
 spot_df.to_csv('../output/mrnaquant_20171201_succesfulRegressFloatFullZ.csv', index=False)
