@@ -2,9 +2,13 @@ from matplotlib import pyplot as plt
 import pandas as pd
 import numpy as np
 import seaborn as sns
-
+import bebi103
+#==============================================================================
 # Quality assurance of spots
-# Classify with SVM first, then manually curate
+#==============================================================================
+# Classify with SVM
+#==============================================================================
+
 # load classifier
 with open('../output/spot_trainingset/clf_beta1_size9NormedNotSmooth.pkl', 'rb') as f:
     clf = pickle.load(f)
@@ -29,37 +33,58 @@ labels_pred = clf.predict(spot_ims)
 # add labels
 spot_df['svm_label'] = labels_pred
 
+#=============================================================================
+# Compute average mRNA intensity and discard outliers using good-bad data model
+#=============================================================================
+mrna_int = spot_df.gauss_int
+with pm.Model() as model:
+    # Priors
+    mu = pm.Uniform('mu', 0, 1)
+    sigma = bebi103.pm.Jeffreys('sigma', 0.01, 1)
+    sigma_bad = bebi103.pm.Jeffreys('sigma_bad', sigma, 100)
+    w = pm.Beta('w', alpha=0.5, beta=0.5, shape=len(mrna_int))
+    # Likelihood is good-bad data model.
+    a_obs = bebi103.pm.GoodBad('a_obs',
+                               mu=mu,
+                               sigma=sigma,
+                               sigma_bad=sigma_bad,
+                               w=w,
+                               observed=mrna_int)
+    trace_goodbad = pm.sample(draws=2000, tune=2000, njobs=4)
+df_mcmc = bebi103.pm.trace_to_dataframe(trace_goodbad)
+# get prob of being bad (high w -> good, low w -> bad)
+wcols = [c for c in df_mcmc.columns if 'w_' in c]
+w = np.median(df_mcmc[wcols].values, axis=0)
+# smaller valued intensities have higher prob of being bad
+corner.corner(df_mcmc[['mu', 'sigma', 'sigma_bad']])
+plt.figure()
+plt.scatter(w, mrna_int, s=10, alpha=0.2)
+spot_df['w_goodbad'] = w
+
+# label based on good and bad model weight and correlation with ideal
+spot_df['gb_label'] = ''
+spot_df.loc[(spot_df.w_goodbad>0.5), 'gb_label'] = 'mrna'
+single_mrna = spot_df[spot_df.svm_label=='mrna'].median()
+# crap: bad weight, low intensity
+spot_df.loc[(spot_df.w_goodbad<0.5)&(spot_df.gauss_int<single_mrna), 'gb_label'] = 'crap'
+# TS: bad weight, high intensity
+spot_df.loc[(spot_df.w_goodbad<0.5)&(spot_df.gauss_int>single_mrna), 'gb_label'] = 'TS'
+
 #========================================================================
-# manual Quality Assurance
+# Manual curation
+#========================================================================
+
 spot_df['pid'] = spot_df.apply(lambda x: str(int(x.x))+str(int(x.y))+x.imname, axis=1)
 mrna_qa = spot_df[(spot_df.svm_label.isin(['crap']))].sort_values(['corrwideal']).copy()
-ind_mrna, ims_mrnaqa, mrna_qa_ = sel_training(mrna_qa, ims_proj, ncols=200, normall=1, mark_center=0, s=9, cmap='viridis')
+ind_mrna, ims_mrnaqa, mrna_qa_ = sel_training(mrna_qa, ims_proj, ncols=200,
+        normall=1, mark_center=0, s=9, cmap='viridis', steps=200)
 # create new label for these in each round: crap_mrna, crap_mrna2...
 spot_df.loc[spot_df.pid.isin(mrna_qa[ind_mrna].pid), 'svm_label'] = 'crap_TS'
-
-fig, ax = plt.subplots(1)
-for l in spot_df.svm_label.unique():
-    plot_ecdf(spot_df[spot_df.svm_label==l].corrwideal, label=l, ax=ax)
-plt.legend()
-
-# do it in steps
-mrna_qa = spot_df[(spot_df.svm_label.isin(['crap']))].sort_values(['cx']).copy()
-ind_r, ims_r, mrna_qa_ = [], [], pd.DataFrame()
-step = 2000
-for n in np.arange(step, len(mrna_qa)+step, step):
-    _ind_mrna, _ims_mrnaqa, _mrna_qa = sel_training(mrna_qa[n-step:n],
-        ims_proj, ncols=60, mark_center=0, s=9, cmap='viridis', normall=1)
-    print(n-step, n)
-    ind_r.append(_ind_mrna)
-    ims_r.append(_ims_mrnaqa)
-    mrna_qa_ = pd.concat((mrna_qa_, _mrna_qa), ignore_index=True)
-ind_r = np.concatenate(ind_r)
-# create new label for these in each round: crap_mrna, crap_mrna2...
-spot_df.loc[spot_df.pid.isin(mrna_qa_[ind_r].pid), 'svm_label'] = 'former_crap'
 
 # quantify mrnas in TS
 smrna_int = spot_df[spot_df.svm_label=='mrna'].gauss_int.median()
 smrna_mass = spot_df[spot_df.svm_label=='mrna'].mass.median()
-spot_df['no_mrnas'] = np.round(spot_df.gauss_int/smrna_int)
-spot_df['no_mrnas'] = np.round(spot_df.mass/smrna_mass)
-spot_df.loc[(spot_df.no_mrnas<1), 'no_mrnas'] = 1
+spot_df['no_mrnas_fit'] = np.round(spot_df.gauss_int/smrna_int)
+spot_df['no_mrnas_mass'] = np.round(spot_df.mass/smrna_mass)
+
+spot_df.to_csv('../output/mrnaquant_20171201_succesfulRegressFloatFullZ.csv', index=False)

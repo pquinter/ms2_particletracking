@@ -39,15 +39,28 @@ spot_df = pd.concat((spot_df, popt_all), axis=1)
 fit_ints = popt_all.apply(lambda x: gauss3d(X, x).sum() - x.r*wsize**3, axis=1)
 spot_df['gauss_int'] = fit_ints
 
+# Replace failed fit (negative values) with nearest intensity val by mass
+bad_mask = (spot_df[['r', 'a', 'bx', 'by', 'bz','cx','cy','cz', 'gauss_int']]<0).any(axis=1)
+bad_ind = spot_df[bad_mask].index.values
+good_ind = spot_df[~bad_mask].sort_values('mass').index.values
+replace_ind = np.searchsorted(good_ind, bad_ind)
+spot_df.loc[bad_ind, 'gauss_int'] = spot_df.loc[replace_ind].gauss_int.values
+
+#========================================================================
+# Correlation to an ideal spot
+#========================================================================
 # compute correlation to an ideal spot: point source blurred with gaussian of PSF width
-ims_proj_fish = load_ims(rrdir+'zprojected/', 'tif', channel=0)
-allims = get_batch_bbox(spot_df, ims_proj_fish)
 idealspot = np.full((9,9), 0) # zero filled wsize*wsize array
 idealspot[4,4] = 1 # single light point source at the center
 idealspot = skimage.filters.gaussian(idealspot, sigma=4.2) # PSF width blur
+# get z-projected fish images
+ims_proj_fish = load_ims(rrdir+'zprojected/', 'tif', channel=0)
+allims = get_batch_bbox(spot_df, ims_proj_fish)
 # pearson corr on projected im is best, assuming im is centered at potential
 # peak. This is usually eq to max of normalized cross-correlation.
 # Also tried spearman and 3d stacks, slower and not worth it.
 allcorrs = np.array([np.corrcoef(idealspot.ravel(), im.ravel())[1][0] for im in allims])
 spot_df['corrwideal'] = allcorrs
+# Drop everything that does not look like a spot
+spot_df_filtered = spot_df[spot_df.corrwideal>0.5].reset_index(drop=True)
 spot_df.to_csv('../output/mrnaquant_20171201_succesfulRegressFloatFullZ.csv', index=False)

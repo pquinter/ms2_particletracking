@@ -21,12 +21,15 @@ from matplotlib import pyplot as plt
 
 rrdir = '../data/FISH/20171201/'
 ims_stack = load_ims(rrdir+'zstacks/', 'STK')
+# load nuclei and cell markers
+with open('../output/nuc_trainingset/20171201_nuclei_segment_centroids_markers_segim.pkl', 'rb') as f:
+    seg_coords = pickle.load(f)
+    sel_markers_dict = pickle.load(f)
 # try it on a sample
 #sample = ['666FISHGal10PP7_s10', '666FISHGal10PP7_s9']
 
 # dataframe for single transcript peaks
 peaks = pd.DataFrame()
-seg_coords = pd.DataFrame()
 for imname in tqdm(ims_stack):
 #for imname in tqdm(sample):
     fish_stack = ims_stack[imname]
