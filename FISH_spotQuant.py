@@ -3,13 +3,16 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 
+ims_dir = '../data/FISH/20171201/zstacks/'
+input_dir = '../output/20171201/20171201_smFISHpeaks3Draw.csv'
+output_dir = '../output/20171201/20171201_smFISHpeaks3DrawQuant.csv'
 #========================================================================
 # Fit spots to 3d Gaussian
 #========================================================================
 # get full 3d images
-ims_stack = load_ims(rrdir+'zstacks/', 'STK')
+ims_stack = load_ims(ims_dir, 'STK')
 # get spot 3D patches from images
-spot_df = pd.read_csv('../output/{}_smFishPeaks3D.csv'.format('20171201'))
+spot_df = pd.read_csv(input_dir)
 spot_ims = get_batch_bbox(spot_df, ims_stack, wsize, im3d=True, size_z='Full')
 # convert to float for regression
 spot_ims_float = [skimage.img_as_float(im) for im in spot_ims]
@@ -62,5 +65,4 @@ allims = get_batch_bbox(spot_df, ims_proj_fish)
 allcorrs = np.array([np.corrcoef(idealspot.ravel(), im.ravel())[1][0] for im in allims])
 spot_df['corrwideal'] = allcorrs
 # Drop everything that does not look like a spot
-spot_df_filtered = spot_df[spot_df.corrwideal>0.5].reset_index(drop=True)
-spot_df.to_csv('../output/mrnaquant_20171201_succesfulRegressFloatFullZ.csv', index=False)
+spot_df.to_csv(output_dir, index=False)

@@ -8,12 +8,13 @@ from tqdm import tqdm
 from im_utils import *
 %matplotlib
 
+ims_dir = '../data/FISH/20171201/zprojected/'
+output_dir = '../output/pipeline/20171201_nuclei_segment_centroids_markers_segim.pkl'
 # =============================================================================
 # get nuclei centroid dataframe and nuclei markers for segmentation quality
 # control =====================================================================
 
-rrdir = '../data/FISH/20171201/'
-ims_projected = load_ims(rrdir+'zprojected/', 'tif')
+ims_projected = load_ims(ims_dir, 'tif')
 seg_coords, ims_seg , markers_dict = pd.DataFrame(), {}, {}
 for imname in tqdm(ims_projected):
     print('analyzing {}'.format(imname))
@@ -47,19 +48,18 @@ for imname in tqdm(ims_projected):
     # make nuclei centers dataframe ===========================================
     # get centroids (so all bbox are same size)
     nuc_regionprops = skimage.measure.regionprops(nuclei_markers, dapi)
-    _seg_coords = regionprops2df(nuc_regionprops, props=('label', 'centroid', 'mean_intensity', 'area'))
-    # add image name for sel_training func
+    _seg_coords = regionprops2df(nuc_regionprops, props=('label', 'centroid',
+        'mean_intensity', 'area'))
     _seg_coords['imname'] = imname
     seg_coords = pd.concat((seg_coords, _seg_coords), ignore_index=True)
 
 # expand centroid into x, y coords
 seg_coords[['y','x']] = seg_coords.centroid.apply(pd.Series)
-
 # add cell id
 seg_coords['cid'] = seg_coords.apply(lambda x: x.imname+'_'+str(x.label), axis=1)
 
 # pickle everything
-with open('../output/pipeline/20171201_nuclei_segment_centroids_markers_segim.pkl', 'wb') as f:
+with open(output_dir, 'wb') as f:
     pickle.dump(seg_coords, f)
     pickle.dump(markers_dict, f)
     pickle.dump(ims_seg, f)

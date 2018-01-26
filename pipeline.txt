@@ -1,8 +1,35 @@
-segment nuclei (reconstruct from peaks)
-segment cells (reconstruct from nuclei)
-manually curate segmentation (weed out crap)
-identify candidate spots (peak detection, keep only inside cells)
-fit spots to 3D gaussian, compute intensity
-classify spots with SVM
-manually curate spots (weed out crap)
-identify outliers with good bad data model? correlation with ideal spot?
+FISH_segmentation.py
+    1. segment nuclei (reconstruct from nuclei centers/peaks)
+    2. segment cells (reconstruct from nuclei)
+    input: root directory containing strain dirs with z_projected ims
+    output: pkl containing:
+                seg_coords, df with segmentation coords,
+                markers_dict, dict of cell and nuclei markers
+                ims_seg, segmentation images with boundaries on merge of dapi+autof+fish
+FISH_segmentationQA.py
+    manually curate segmentation (weed out crap)
+    input: pkl output from FISH_segmentation
+    output: 1. pkl with seg_coords and sel_markers_dict (dict of selected markers)
+            2. (dir) segmentation images with boundaries of selected saved as tif
+FISH_findspots.py
+    identify candidate spots (peak detection, keep only inside cells)
+    input: 1. pkl output from segmentationQA
+           2. root directory containing strain dirs with fish 3D ims
+    output: peaks, df with spot 3D coords, cell/nuc labels and cell number
+FISH_spotQuant.py
+    fit spots to 3D gaussian, compute intensity, compute corr w ideal spot
+    input: 1. peaks df output from FISH_findspots.py
+           2. root directory containing strain dirs with fish 3D ims
+    output: spot_df, same as peaks with quantifications
+FISH_spotQA.py
+    1. filter spots by correlation with ideal spot (only>0.5)
+    2. classify spots with SVM
+    3. identify outliers with good bad data model? 
+    4. manually curate spots (weed out crap)
+    input: 1. spot_df from FISH_spotQuant.py
+            2. SVM classifier pkl
+    output: filtered and labeled spot_df (TS, mrna)
+FISH_strain_comp.py
+    Compare strains. Fairly easy with fully annotated spot_df.
+    input: spot_df from FISH_spotQA
+    ouput: ecdf plots of mRNA distribution and other statistics

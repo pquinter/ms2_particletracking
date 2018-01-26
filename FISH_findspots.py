@@ -18,11 +18,13 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 %matplotlib
 
+ims_dir = '../data/FISH/20171201/zstacks/'
+input_dir = '../output/nuc_trainingset/20171201_nuclei_segment_centroids_markers_segim.pkl'
+output_dir = '../output/20171201_smFISHpeaks3Draw.csv'
 
-rrdir = '../data/FISH/20171201/'
-ims_stack = load_ims(rrdir+'zstacks/', 'STK')
+ims_stack = load_ims(ims_dir, 'STK')
 # load nuclei and cell markers
-with open('../output/nuc_trainingset/20171201_nuclei_segment_centroids_markers_segim.pkl', 'rb') as f:
+with open(input_dir, 'rb') as f:
     seg_coords = pickle.load(f)
     sel_markers_dict = pickle.load(f)
 # try it on a sample
@@ -64,4 +66,4 @@ peaks['strain'] = peaks.imname.apply(lambda x: x.split('FISH')[0])
 # assign unique cell and nuclear id
 peaks['cid'] = peaks.apply(lambda x: x.imname+'_'+str(x.cell_label), axis=1)
 peaks['nid'] = peaks.apply(lambda x: x.imname+'_'+str(x.nuc_label), axis=1)
-peaks.to_csv('../output/{}_smFishPeaks3D.csv'.format(rrdir.split('/')[-2]), index=False)
+peaks.to_csv(output_dir, index=False)
