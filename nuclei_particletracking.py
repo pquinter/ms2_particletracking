@@ -54,6 +54,7 @@ for mname in tqdm(movs):
     reg_props = regionprops2df(reg_props, props=('label','centroid'))
     # expand centroid coordinates into x,y cols
     reg_props[['y_cell','x_cell']] = reg_props.centroid.apply(pd.Series)
+    # initialize frame number
     # enlarge nuclei markers to keep particles close to nuclear edge
     markers_proj_enlarged = skimage.morphology.dilation(markers_proj,
             selem=skimage.morphology.disk(5))
@@ -94,12 +95,18 @@ for mname in tqdm(movs):
     _parts = tp.filter_stubs(_parts, 10)
 
     # fill in int values of missing frames ==================================
+    _parts = pd.merge(reg_props[['label','x_cell','y_cell']],
+                                    _parts, how='outer', on='label')
     _peaks_complete = pd.DataFrame()
     for label, group in _parts.groupby('label'):
         coords_df = pd.DataFrame()
         coords_df['frame'] = np.arange(0, len(movie))
         coords_df['imname'] = mname
         coords_df = pd.merge(group, coords_df, on='frame', how='right')
+        # if no particles in cell, need to actively preserve x,y coords
+        if coords_df.x.isnull().values[0]:
+            coords_df['x_cell'] = group['x_cell'].values[0]
+            coords_df['y_cell'] = group['y_cell'].values[0]
         # save 'mass' series to assign nan later to nonparticles later
         mass_series = coords_df['mass']
         # fill first frame if missing to be able to do forward fill, see below
@@ -107,7 +114,11 @@ for mname in tqdm(movs):
             coords_df.loc[coords_df.frame==0] = coords_df.fillna(method='bfill')[coords_df.frame==0]
         # fill rest of missing frames using coords of last observed part
         coords_df = coords_df.fillna(method='ffill')
-        part_ims = get_batch_bbox(coords_df, {mname:movie_norm}, movie=True)
+        try:
+            part_ims = get_batch_bbox(coords_df, {mname:movie_norm}, movie=True)
+        except ValueError: # no particles in cell, still get intensity
+            part_ims = get_batch_bbox(coords_df, {mname:movie_norm}, 
+                    movie=True, coords_col=['x_cell','y_cell'])
         int_vals = [np.max(im) for im in part_ims]
         # assign intensity and mass of nan to non particles
         coords_df['intensity'] =  int_vals
@@ -115,6 +126,8 @@ for mname in tqdm(movs):
         _peaks_complete = pd.concat((_peaks_complete, coords_df.sort_values('frame')), ignore_index=True)
     _peaks_complete = pd.merge(reg_props[['label','x_cell','y_cell']],
                                     _peaks_complete, how='outer', on='label')
+    # Reassign mname. Necessary because cells without parts dont' have it
+    _peaks_complete['imname'] = mname
     peaks_complete = pd.concat((peaks_complete, _peaks_complete), ignore_index=True)
 peaks_complete['pid'] = peaks_complete.apply(lambda x: str(x.particle)+'_'+x.imname, axis=1)
 peaks_complete.to_csv('../output/pp7/peaks_complete.csv', index=False)
