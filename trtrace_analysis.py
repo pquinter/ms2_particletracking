@@ -2,6 +2,7 @@ from matplotlib import pyplot as plt
 import pandas as pd
 import numpy as np
 import seaborn as sns
+from collections import defaultdict
 
 def plot_hmap(hmap, drop='movie', save=False, normtrace=True):
     try: hmap = hmap.drop(drop, axis=1)
@@ -11,7 +12,7 @@ def plot_hmap(hmap, drop='movie', save=False, normtrace=True):
     fig = plt.figure(figsize=(16, 10))
     sns.heatmap(hmap,xticklabels=5, yticklabels=False, cmap='viridis',
             robust=True)
-    plt.xlabel('Time (s)')
+    plt.xlabel('Time (min)')
     plt.ylabel('Trace')
     plt.xticks(rotation=60)
     plt.tight_layout()
@@ -38,56 +39,25 @@ def align_trace(trace, interpolate=np.mean):
     return trace_aligned
 
 # load nuclei and particle tracking data
-nuclei_peaks = pd.read_pickle('../output/pp7/pp7spots_SVMfiltered_20171219.pkl')
-
-# create mass heatmap
-hmap = pd.DataFrame()
-movcount = defaultdict(int)
-for name, group in nuclei_peaks.groupby('imname'):
-    h = tp.filter_stubs(group, 5)
-    h = group[['mass','frame', 'particle']].pivot(index='particle', columns='frame')
-    h['movie'] = name
-    hmap = pd.concat((hmap, h), axis=0)
-    movcount[name]+=h.shape[0]
-# convert frame numbers to time in seconds, last column is movie name
-hmap.columns = list(np.arange(20, 20*hmap.shape[1], 20)) + ['movie']
+peaks = pd.read_csv('../output/pp7/peaks_complete.csv')
+# create intensity heatmap
+hmap = peaks.sort_values('imname').pivot(index='pid',
+                        columns='frame', values='intensity')
+# convert frame numbers to time in minutes
+hmap.columns = list(np.round(np.arange(0, 20*hmap.shape[1], 20)/60))
 plot_hmap(hmap, normtrace=True)
 
-# merge complementary traces
-hmap = pd.DataFrame()
-movcount = defaultdict(int)
-# number of frames
-no_frames, alltraces = nuclei_peaks.frame.max() + 1, 0
-for (imname, label), group in nuclei_peaks.groupby(('imname', 'label')):
-    trace = np.zeros(no_frames)
-    for f in range(no_frames):
-        spot_frame = group[group.frame==f]
-        if len(spot_frame) < 1:
-            # try following the particle
-            try:
-                trace[f] = nuclei_peaks[(nuclei_peaks.pid==curr_pid)&\
-                        (nuclei_peaks.frame==f)].mass
-            except ValueError: continue
-        if len(spot_frame) == 1:
-            trace[f] = spot_frame.mass
-            curr_pid = spot_frame.pid.values[0]
-        elif len(spot_frame)>1:
-            trace[f] = spot_frame.sort_values('signal').tail(1).mass
-            print(spot_frame)
-    try:
-        alltraces = np.vstack((alltraces, trace))
-    except ValueError: alltraces = trace
-plot_hmap(pd.DataFrame(alltraces))
+# Align traces to the left by removing mass NaNs in intensity col
+peaks_al = pd.DataFrame()
+for pid, group in peaks.groupby('pid'):
+    nan_ind = group.mass.fillna(method='ffill').isnull()
+    peaks_al = pd.concat((peaks_al, group[~nan_ind]), ignore_index=True)
 
-
-# Align traces to the left
-hmap_aligned = hmap.drop('movie', axis=1).apply(lambda x: align_trace(x,
-        interpolate=np.mean), axis=1).dropna(how='all', axis=1)
+hmap_aligned = peaks_al.sort_values('imname').pivot(index='pid',
+                        columns='frame', values='intensity')
+hmap_aligned = hmap_aligned.apply(lambda x: align_trace(x, interpolate=False), axis=1)
 plot_hmap(hmap_aligned)
 
-# tidy dataframe for aligned scatter plot; it's a mess, not very useful
-peaks_tidy = pd.melt(hmap_aligned)
-peaks_tidy['movie'] = list(hmap['movie'])*hmap_aligned.shape[1]
-peaks_tidy.columns = ['time', 'intensity', 'movie']
-sns.tsplot(time='time', value='intensity', condition='movie', data=peaks_tidy,
+# merged traces by movie, it's a mess and doesn't really make sense
+sns.tsplot(time='frame', value='intensity', condition='imname', data=peaks_al,
             estimator=np.nanmean, ci=68, n_boot=1e2)
