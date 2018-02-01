@@ -24,32 +24,19 @@ for fname in tqdm(os.listdir(ddir)):
         _mov = io.imread(ddir + fname)
         _mname = fname.split('.')[0]
         movs[_mname] = _mov
-        # Convert image to float
-        #_mov_norm = normalize_im(_mov)
-        ## substract background with strong gaussian blur
-        #_mov_bg = skimage.filters.gaussian(_mov_norm, sigma=50)
-        #_mov_norm -= _mov_bg
-        ## smooth with gaussian
-        #_mov_smooth = skimage.filters.gaussian(_mov_norm, sigma=1)
-        #movs_smooth[_mname] = _mov_smooth
     else: next
-# remove crappy movie
-#del movs['12032017_TL47_time_4']
-#del movs_smooth['12032017_TL47_time_4']
 
 # area and intensity limits
-maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,1), (15, 500), (20, 500), (500, 5000)
+maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,1), (15, 500), (20, 500), (50, 5000)
 
-# dictionary for time-projected mask, nuclei markers and properties
-nuclei_proj = {}
 # dataframe for transcription peaks and nuclei properties
-nuclei_peaks = pd.DataFrame()
+peaks_complete = pd.DataFrame()
 
 for mname in tqdm(movs):
-    #test on a single movie
-    #if mname!='20171219_67f6_Late': continue
     print('analyzing {}'.format(mname))
     movie = movs[mname]
+
+    # segment cells ===========================================================
     print('normalizing...')
     movie_norm = normalize(movie) #np.stack([normalize(frame) for frame in movie])
     print('projecting through time axis...')
@@ -61,79 +48,68 @@ for mname in tqdm(movs):
             selem=skimage.morphology.disk(5), clear_border=False)
     print('filtering...')
     # get nuclei markers with watershed transform, bound by area and intensity
-    markers_proj, _nuclei_proj = label_sizesel(movie_proj, m_mask,
+    markers_proj, _ = label_sizesel(movie_proj, m_mask,
             maxint_lim, minor_ax_lim, major_ax_lim, area_lim, watershed=True)
-    print('identifying peaks...')
-    # identify transcription particles, diameter of 3 works well
-    _parts = tp.batch(movie, 3, minmass=1000)
     # enlarge nuclei markers to keep particles close to nuclear edge
     markers_proj_enlarged = skimage.morphology.dilation(markers_proj,
             selem=skimage.morphology.disk(5))
+
+    # identify and track parts ================================================
+    print('identifying peaks...')
+    # identify transcription particles, diameter of 3 works well
+    _parts = tp.batch(movie, 3, minmass=1000, characterize=False)
     # Get nuclear label
     _parts['label'] = _parts.apply(lambda coords:\
             markers_proj_enlarged[int(coords.y), int(coords.x)], axis=1)
-    # track them, search range of 10, remember particle for 5 frames
-    # if many more particles than nuclei, skip this movie??
-    # should do first round of classification here, with a better training set
+    # track them, search range of 5 pixels, remember particle for 5 frames
     print('tracking particles...')
     _parts = tp.link_df(_parts, 5, memory=5)
+
+    # Tidy up ==========================================================
+    # Relabel particles that were in cells and left (e.g. close to edge)
+    for plabel, group in _parts.groupby('particle'):
+        c_label = group.sort_values('label', ascending=False).label.values[0]
+        _parts.loc[(_parts.particle==plabel)&(_parts.label<1), 'label']=c_label
+    # remove peaks that never were in cells
+    _parts = _parts[_parts.label>0]
+    # if more than one spot detected in the same cell and frame, keep brightest
+    _parts = _parts.sort_values('mass', ascending=False).drop_duplicates(['frame', 'label'])
     # merge particles of the same cell
-    _parts_ = pd.DataFrame()
     for label, group in _parts.groupby('label'):
-        # if more than one spot detected in frame, keep brightest
-        group = group.sort_values('signal', ascending=False).drop_duplicates('frame')
         # assign the most common particle label to all
         plabels = group.particle.values
         plabels_counts = np.unique(plabels, return_counts=True)
-        group['particle'] = plabels[np.argmax(plabels_counts)]
-        _parts_ = pd.concat((_parts_, group))
-    _parts, _parts_ = _parts_, pd.DataFrame()
-    # relabel particles that were in cells and were undetected in some frames
-    for plabel, group in _parts.groupby('particle'):
-        cell_label = group.sort_values('label', ascending=False).label.values[0]
-        group.loc[group.label<1].label = cell_label
-        _parts_ = pd.concat((_parts_, group))
-    _parts = _parts_
-    # remove peaks that never were in cells
-    _parts = _parts[_parts.label>0]
-    # filter, keep only trajectories of more than 10 frames
+        group_plabel = plabels[np.argmax(plabels_counts)]
+        # remove particles that appear in other cells
+        if group_plabel in _parts[~(_parts.label==label)].particle.values:
+            _parts = _parts.loc[~(_parts.particle.isin(plabels))]
+            continue
+        else:
+            _parts.loc[_parts.label==label, 'particle'] = group_plabel
+    # keep only trajectories of more than 10 frames
     _parts = tp.filter_stubs(_parts, 10)
-    # Dataframe for movie nuclei properties
-    _nuclei = pd.DataFrame()
-    print('measuring nuclei properties...')
-    for frame_no, frame in enumerate(movie):
-        # commented lines can be used to create a frame specific mask, which is
-        # a more correct approach, but it doesn't really change much and adds
-        # computation time (~3s per loop)
-        ## create frame mask
-        #mask_f = mask_image(frame, min_size=200, block_size=101, selem=skimage.morphology.disk(10))
-        ## use time-projected, filtered markers to mark frame mask
-        #markers_f = mask_f * markers_proj
-        #nuclei_f = skimage.measure.regionprops(markers_f, frame)
-        # get nuclei for each frame based on time-proj markers
-        nuclei_f = skimage.measure.regionprops(markers_proj, frame)
-        # convert to dataframe and save
-        nuclei_fdf = regionprops2df(nuclei_f)
-        nuclei_fdf['frame'] = frame_no
-        _nuclei = pd.concat([_nuclei, nuclei_fdf])
-    print('{0} total nuclei for {1}'.format(len(nuclei_f), mname))
 
-    # Merge, label and save.
-    # Particles can be matched to nuclei based on frame number and nuclear label
-    _nuclei_peaks = pd.merge(_nuclei, _parts, on=['frame', 'label'])
-    _nuclei_peaks['imname'] = mname
-    # add movie specific particle id
-    _nuclei_peaks['pid'] = _nuclei_peaks.apply(lambda x: str(x.particle)+x.imname, axis=1)
-    # transform particle whole movie coordinates to nuclei bounding box coordinates
-    _nuclei_peaks['bbx'] = _nuclei_peaks['x'] - _nuclei_peaks.bbox.apply(lambda x: x[1])
-    _nuclei_peaks['bby'] = _nuclei_peaks['y'] - _nuclei_peaks.bbox.apply(lambda x: x[0])
-    # get bounding box image
-    _nuclei_peaks['bb_image'] = [movie[x.frame, x.bbox[0]:x.bbox[2],
-                x.bbox[1]:x.bbox[3]] for (_, x) in _nuclei_peaks.iterrows()]
+    # fill in int values of missing frames ==================================
+    _peaks_complete = pd.DataFrame()
+    for label, group in _parts.groupby('label'):
+        coords_df = pd.DataFrame()
+        coords_df['frame'] = np.arange(0, len(movie))
+        coords_df['imname'] = mname
+        coords_df = pd.merge(group, coords_df, on='frame', how='right')
+        # save 'mass' series to assign nan later to nonparticles later
+        mass_series = coords_df['mass']
+        # fill first frame if missing to be able to do forward fill, see below
+        if coords_df.loc[coords_df.frame==0].x.isnull().values[0]:
+            coords_df.loc[coords_df.frame==0] = coords_df.fillna(method='bfill')[coords_df.frame==0]
+        # fill rest of missing frames using coords of last observed part
+        coords_df = coords_df.fillna(method='ffill')
+        part_ims = get_batch_bbox(coords_df, {mname:movie_norm}, movie=True)
+        int_vals = [np.max(im) for im in part_ims]
+        # assign intensity and mass of nan to non particles
+        coords_df['intensity'] =  int_vals
+        coords_df['mass'] =  mass_series
+        _peaks_complete = pd.concat((_peaks_complete, coords_df.sort_values('frame')), ignore_index=True)
 
-    nuclei_peaks = pd.concat([nuclei_peaks, _nuclei_peaks])
-    # save markers and time-projected properties
-    nuclei_proj[mname] = (_nuclei_proj, markers_proj)
-
-# save dataframe as pickle to preserve numpy arrays
-nuclei_peaks.to_pickle('../output/pp7/nuclei_peaks.p')
+    peaks_complete = pd.concat((peaks_complete, _peaks_complete), ignore_index=True)
+peaks_complete['pid'] = peaks_complete.apply(lambda x: str(x.particle)+'_'+x.imname, axis=1)
+peaks_complete.to_csv('../output/pp7/peaks_complete.csv', index=False)
