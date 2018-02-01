@@ -54,7 +54,6 @@ for mname in tqdm(movs):
     reg_props = regionprops2df(reg_props, props=('label','centroid'))
     # expand centroid coordinates into x,y cols
     reg_props[['y_cell','x_cell']] = reg_props.centroid.apply(pd.Series)
-    # initialize frame number
     # enlarge nuclei markers to keep particles close to nuclear edge
     markers_proj_enlarged = skimage.morphology.dilation(markers_proj,
             selem=skimage.morphology.disk(5))
@@ -107,6 +106,7 @@ for mname in tqdm(movs):
         if coords_df.x.isnull().values[0]:
             coords_df['x_cell'] = group['x_cell'].values[0]
             coords_df['y_cell'] = group['y_cell'].values[0]
+            coords_df['label'] = label
         # save 'mass' series to assign nan later to nonparticles later
         mass_series = coords_df['mass']
         # fill first frame if missing to be able to do forward fill, see below
@@ -124,8 +124,6 @@ for mname in tqdm(movs):
         coords_df['intensity'] =  int_vals
         coords_df['mass'] =  mass_series
         _peaks_complete = pd.concat((_peaks_complete, coords_df.sort_values('frame')), ignore_index=True)
-    _peaks_complete = pd.merge(reg_props[['label','x_cell','y_cell']],
-                                    _peaks_complete, how='outer', on='label')
     # Reassign mname. Necessary because cells without parts dont' have it
     _peaks_complete['imname'] = mname
     peaks_complete = pd.concat((peaks_complete, _peaks_complete), ignore_index=True)

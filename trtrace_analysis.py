@@ -47,17 +47,17 @@ hmap = peaks.sort_values('imname').pivot(index='pid',
 hmap.columns = list(np.round(np.arange(0, 20*hmap.shape[1], 20)/60))
 plot_hmap(hmap, normtrace=True)
 
-# Align traces to the left by removing mass NaNs in intensity col
+# Align traces to the left by removing NaNs in mass col in intensity col
 peaks_al = pd.DataFrame()
 for pid, group in peaks.groupby('pid'):
     nan_ind = group.mass.fillna(method='ffill').isnull()
     peaks_al = pd.concat((peaks_al, group[~nan_ind]), ignore_index=True)
 
 hmap_aligned = peaks_al.sort_values('imname').pivot(index='pid',
-                        columns='frame', values='intensity')
+                                    columns='frame', values='intensity')
 hmap_aligned = hmap_aligned.apply(lambda x: align_trace(x, interpolate=False), axis=1)
 plot_hmap(hmap_aligned)
 
-# merged traces by movie, it's a mess and doesn't really make sense
+# merged traces by movie, it's a mess and doesn't really make sense to do this
 sns.tsplot(time='frame', value='intensity', condition='imname', data=peaks_al,
             estimator=np.nanmean, ci=68, n_boot=1e2)
