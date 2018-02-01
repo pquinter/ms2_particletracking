@@ -98,6 +98,7 @@ for mname in tqdm(movs):
     for label, group in _parts.groupby('label'):
         coords_df = pd.DataFrame()
         coords_df['frame'] = np.arange(0, len(movie))
+        coords_df['imname'] = mname
         coords_df = pd.merge(group, coords_df, on='frame', how='right')
         # save 'mass' series to assign nan later to nonparticles later
         mass_series = coords_df['mass']
@@ -112,10 +113,8 @@ for mname in tqdm(movs):
         coords_df['intensity'] =  int_vals
         coords_df['mass'] =  mass_series
         _peaks_complete = pd.concat((_peaks_complete, coords_df.sort_values('frame')), ignore_index=True)
-    _peaks_complete['imname'] = mname
     _peaks_complete = pd.merge(reg_props[['label','x_cell','y_cell']],
                                     _peaks_complete, how='outer', on='label')
-
     peaks_complete = pd.concat((peaks_complete, _peaks_complete), ignore_index=True)
 peaks_complete['pid'] = peaks_complete.apply(lambda x: str(x.particle)+'_'+x.imname, axis=1)
 peaks_complete.to_csv('../output/pp7/peaks_complete.csv', index=False)
