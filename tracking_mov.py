@@ -27,10 +27,7 @@ for (imname, label), nuc in nuclei_peaks.groupby(['imname', 'label']):
                                     movie=True, coords_col=['x_cell','y_cell']))
 
 # make global nuclei tracking movie for easier visualization and save
-norm=True
 for m in nuc_movs:
     _movs = nuc_movs[m]
-    if norm:
-        _movs = [skimage.img_as_uint(normalize(_movs[i])) for i in range(len(_movs))]
-    globmov = concat_movies(_movs, nrows=4)
-    io.imsave('../output/pp7/movie_byCell{}.tif'.format(m), globmov)
+    globmov = concat_movies(_movs, ncols=4, norm=1)
+    io.imsave('../output/pp7/movie_byCell{}.tif'.format(m), skimage.img_as_int(globmov))

@@ -40,8 +40,6 @@ def align_trace(trace, interpolate=np.mean):
 
 # load nuclei and particle tracking data
 peaks = pd.read_csv('../output/pp7/peaks_complete.csv')
-# pid is not unique id anymore because empty cells all have NaN
-peaks['cpid'] = peaks.apply(lambda x: str(x.label)+str(x.particle)+'_'+x.imname, axis=1)
 # peaks can be used directly on cpid, or better to just drop empty cells
 peaks_wparts = peaks.dropna(subset=['x','y'])
 

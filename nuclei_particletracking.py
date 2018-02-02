@@ -7,6 +7,7 @@ import trackpy as tp
 from collections import defaultdict
 from tqdm import tqdm
 import os
+import pickle
 
 from im_utils import *
 
@@ -18,6 +19,8 @@ from matplotlib import pyplot as plt
 movs = {}
 #movs_smooth = {}
 
+output_dir = '../output/pp7/peaks_complete.csv'
+seg_output_dir = '../output/pp7/seg_movs.p'
 ddir = '../data/PP7/PP7_HJ_projected/'
 for fname in tqdm(os.listdir(ddir)):
     if 'tif' in fname:
@@ -29,6 +32,8 @@ for fname in tqdm(os.listdir(ddir)):
 # area and intensity limits
 maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,1), (15, 500), (20, 500), (50, 5000)
 
+# dict to store segmentation movies
+seg_movs = {}
 # dataframe for transcription peaks and nuclei properties
 peaks_complete = pd.DataFrame()
 
@@ -57,6 +62,13 @@ for mname in tqdm(movs):
     # enlarge nuclei markers to keep particles close to nuclear edge
     markers_proj_enlarged = skimage.morphology.dilation(markers_proj,
             selem=skimage.morphology.disk(5))
+
+    # make segmentation movie ================================================
+    print('making segmentation image with highlighted boundaries...')
+    _seg_mov = movie.copy()
+    boundaries = skimage.segmentation.find_boundaries(markers_proj_enlarged)
+    _seg_mov[:, boundaries] = np.max(_seg_mov)
+    seg_movs[mname] = _seg_mov
 
     # identify and track parts ================================================
     print('identifying peaks...')
@@ -127,5 +139,9 @@ for mname in tqdm(movs):
     # Reassign mname. Necessary because cells without parts dont' have it
     _peaks_complete['imname'] = mname
     peaks_complete = pd.concat((peaks_complete, _peaks_complete), ignore_index=True)
-peaks_complete['pid'] = peaks_complete.apply(lambda x: str(x.particle)+'_'+x.imname, axis=1)
-peaks_complete.to_csv('../output/pp7/peaks_complete.csv', index=False)
+
+# add unique row id
+peaks_complete['cpid'] = peaks_complete.apply(lambda x: str(x.label)+'_'+str(x.particle)+'_'+x.imname, axis=1)
+peaks_complete.to_csv(output_dir, index=False)
+with open(seg_output_dir, 'wb') as f:
+    pickle.dump(seg_movs, f)
