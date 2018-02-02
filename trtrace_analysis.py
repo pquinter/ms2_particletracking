@@ -40,8 +40,13 @@ def align_trace(trace, interpolate=np.mean):
 
 # load nuclei and particle tracking data
 peaks = pd.read_csv('../output/pp7/peaks_complete.csv')
+# pid is not unique id anymore because empty cells all have NaN
+peaks['cpid'] = peaks.apply(lambda x: str(x.label)+str(x.particle)+'_'+x.imname, axis=1)
+# peaks can be used directly on cpid, or better to just drop empty cells
+peaks_wparts = peaks.dropna(subset=['x','y'])
+
 # create intensity heatmap
-hmap = peaks.sort_values('imname').pivot(index='pid',
+hmap = peaks_wparts.sort_values('imname').pivot(index='cpid',
                         columns='frame', values='intensity')
 # convert frame numbers to time in minutes
 hmap.columns = list(np.round(np.arange(0, 20*hmap.shape[1], 20)/60))
