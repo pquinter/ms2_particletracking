@@ -33,7 +33,7 @@ for fname in tqdm(os.listdir(ddir)):
 maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (0.1,1), (15, 500), (20, 500), (50, 5000)
 
 # dict to store segmentation movies
-seg_movs = {}
+seg_movs, seg_movs_proj = {}, {}
 # dataframe for transcription peaks and nuclei properties
 peaks_complete = pd.DataFrame()
 
@@ -64,11 +64,15 @@ for mname in tqdm(movs):
             selem=skimage.morphology.disk(5))
 
     # make segmentation movie ================================================
-    print('making segmentation image with highlighted boundaries...')
-    _seg_mov = movie.copy()
-    boundaries = skimage.segmentation.find_boundaries(markers_proj_enlarged)
+    print('making segmentation movie with highlighted boundaries...')
+    _seg_mov, _seg_mov_proj = movie.copy(), movie_proj.copy()
+    boundaries = skimage.segmentation.find_boundaries(markers_proj_enlarged, 
+                                                            mode='outer')
     _seg_mov[:, boundaries] = np.max(_seg_mov)
+    # also make projected im with boundaries for selection
+    _seg_mov_proj[boundaries] = np.max(_seg_mov_proj)
     seg_movs[mname] = _seg_mov
+    seg_movs_proj[mname] = _seg_mov_proj
 
     # identify and track parts ================================================
     print('identifying peaks...')
@@ -145,3 +149,4 @@ peaks_complete['cpid'] = peaks_complete.apply(lambda x: str(x.label)+'_'+str(x.p
 peaks_complete.to_csv(output_dir, index=False)
 with open(seg_output_dir, 'wb') as f:
     pickle.dump(seg_movs, f)
+    pickle.dump(seg_movs_proj, f)
