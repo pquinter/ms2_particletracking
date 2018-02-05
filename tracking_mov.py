@@ -52,3 +52,15 @@ io.imsave('../output/pp7/ref_segmovies.tif', skimage.img_as_int(globmov))
 peaks4sel = peaks4sel.drop_duplicates(subset=['label','imname']).sort_values(['imname','label'])
 sel_ind, ims, peaks4sel = sel_training(peaks4sel, seg_movs_proj, s=50,
                                     ncols=20, coords_col=['x_cell','y_cell'])
+sel_cpid = peaks4sel[sel_ind].cpid.values
+# get rid of those with no identified particles
+sel_peaks = nuclei_peaks[nuclei_peaks.cpid.isin(sel_cpid)]
+with open('../output/pp7/05Feb2018sel_movs.p', 'wb') as f:
+     pickle.dump(sel_peaks, f)
+
+selmovs = []
+for (imname, label), nuc in sel_peaks.groupby(['imname', 'label']):
+    selmovs.append(get_batch_bbox(nuc, track_movs, size=50,
+                                movie=True, coords_col=['x_cell','y_cell']))
+globmovsel = concat_movies(selmovs, ncols=20, norm=1)
+io.imsave('../output/pp7/ref_segmovies_selected.tif', skimage.img_as_int(globmov))
