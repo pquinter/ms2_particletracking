@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from collections import defaultdict
+import pickle
 
 # load nuclei and particle tracking data
 nuclei_peaks = pd.read_csv('../output/pp7/peaks_complete.csv')
@@ -57,6 +58,7 @@ sel_cpid = peaks4sel[sel_ind].cpid.values
 sel_peaks = nuclei_peaks[nuclei_peaks.cpid.isin(sel_cpid)]
 with open('../output/pp7/05Feb2018sel_movs.p', 'wb') as f:
      pickle.dump(sel_peaks, f)
+
 
 selmovs = []
 for (imname, label), nuc in sel_peaks.groupby(['imname', 'label']):
