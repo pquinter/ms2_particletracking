@@ -4,16 +4,17 @@ import numpy as np
 import seaborn as sns
 from collections import defaultdict
 
-def plot_hmap(hmap, drop='movie', save=False, normtrace=True):
+def plot_hmap(hmap, drop='movie', save=False, normtrace=True ,
+        xlabel='Time (min)', ylabel='Trace', cmap='viridis'):
     try: hmap = hmap.drop(drop, axis=1)
     except ValueError: pass
     if normtrace:
         hmap = hmap.apply(lambda x: (x - np.min(x)) / (np.max(x) - np.min(x)), axis=1)
     fig = plt.figure(figsize=(16, 10))
-    sns.heatmap(hmap,xticklabels=5, yticklabels=False, cmap='viridis',
+    sns.heatmap(hmap,xticklabels=5, yticklabels=False, cmap=cmap,
             robust=True)
-    plt.xlabel('Time (min)')
-    plt.ylabel('Trace')
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
     plt.xticks(rotation=60)
     plt.tight_layout()
     if save: plt.savefig(save, bbox_inches='tight')
