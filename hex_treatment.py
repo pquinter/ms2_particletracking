@@ -7,11 +7,14 @@ import numpy as np
 import seaborn as sns
 from skimage import io
 from im_utils import *
+import matplotlib.patches as mpatches
 
-hex75 = io.imread('/Users/porfirio/Documents/research/sternberg_lab/yeastEP/ms2pp7/data/HexanediolTreatment/MAX_TL47pQC75_45minGalInduced_HexTreatFrame3.tif')
-prehex75 = io.imread('/Users/porfirio/Documents/research/sternberg_lab/yeastEP/ms2pp7/data/HexanediolTreatment/MAX_TL47pQC75_35minGalInduced_PreHexTreatment.tif')
-hex92 = io.imread('/Users/porfirio/Documents/research/sternberg_lab/yeastEP/ms2pp7/data/HexanediolTreatment/MAX_TL47tl092_30minGalInduced_HexTreatment.tif')
-hex92_2 = io.imread('/Users/porfirio/Documents/research/sternberg_lab/yeastEP/ms2pp7/data/HexanediolTreatment/MAX_TL47tl092_40minGalInduced_HexTreatment_2.tif')
+%matplotlib
+
+hex75 = io.imread('../data/HexanediolTreatment/MAX_TL47pQC75_45minGalInduced_HexTreatFrame3.tif')
+prehex75 = io.imread('../data/HexanediolTreatment/MAX_TL47pQC75_35minGalInduced_PreHexTreatment.tif')
+hex92 = io.imread('../data/HexanediolTreatment/MAX_TL47tl092_30minGalInduced_HexTreatment.tif')
+hex92_2 = io.imread('../data/HexanediolTreatment/MAX_TL47tl092_40minGalInduced_HexTreatment_2.tif')
 hex92 = np.concatenate((hex92, hex92_2))
 prehex92 = io.imread('/Users/porfirio/Documents/research/sternberg_lab/yeastEP/ms2pp7/data/HexanediolTreatment/MAX_TL47tl092_20minGalInduced_PreHexTreatment.tif')
 def mean_med(mov):
@@ -72,8 +75,9 @@ def kymograph(mov, ax=None, t=20, vmin=100, vmax=750, ylabel=True, title=None,
     if title: ax.set_title(title)
     return ax
 
+labels = ('FUS-PP7-GFP', 'FUS-PP7-GFP +Hex', 'PP7-GFP', 'PP7-GFP +Hex')
 fig, axes = plt.subplots(2, 2, sharey='row', figsize=(22, 8))
-for i, (m, n) in zip((3,2,1,0), zip((prehex75, hex75, prehex92, hex92))):
+for i, (m, n) in zip((3,2,1,0), zip((prehex75, hex75, prehex92, hex92), labels)):
     ax = axes.flat[i]
     kymograph(m, ax, vmax=1500 if '75' in n else 750, ylabel=False, title=n)
 axes[0,0].axhline(5, ls='--', alpha=0.4, c='w')
@@ -87,8 +91,8 @@ rowhex75 = np.array([np.max(f, axis=0) for f in hex75])
 rowprehex75 = np.array([np.max(f, axis=0) for f in prehex75])
 rowhex92 = np.array([np.max(f, axis=0) for f in hex92])
 
-ax=axes[0]
 fig, ax = plt.subplots()
+ax=axes[0]
 color_ix = np.linspace(0, 1, len(rowhex75))
 [plot_ecdf(f, ax=ax, alpha=0.1, color=plt.cm.plasma(i)) for f,i in zip(rowhex75, color_ix)]
 
@@ -99,33 +103,47 @@ ax=axes[1]
 color_ix = np.linspace(0, 1, len(rowhex92))
 [plot_ecdf(f, ax=ax, alpha=0.1, color=plt.cm.plasma(i)) for f,i in zip(rowhex92, color_ix)]
 
-n, ms = 20, 20
+# get top n maximums
+n = 10
+tidyhex = pd.DataFrame()
+for arr, label in zip((prehex75, hex75, prehex92, hex92), labels):
+    rowmax = np.array([np.max(f, axis=0) for f in arr])
+    _df = pd.DataFrame([np.sort(f)[-n:] for f in rowmax]).T
+    _df['label'] = label
+    tidyhex = pd.concat((tidyhex, _df), axis=0)
+tidyhex = pd.melt(tidyhex, id_vars='label')
+tidyhex.columns = ('label', 'time', 'Fluor. (a.u.)')
+# convert time to minutes
+tidyhex['time'] = tidyhex['time'].apply(lambda x: x*20/60)
 
-topprehex75 = pd.DataFrame([np.sort(f)[-n:] for f in rowprehex75])
-for row in topprehex75.iterrows():
-    plt.plot(np.full(n, row[0]), row[1], '.', c='b', alpha=0.5, ms=ms)
 
-tophex75 = pd.DataFrame([np.sort(f)[-n:] for f in rowhex75])
-for row in tophex75.iterrows():
-    plt.plot(np.full(n, row[0]), row[1], '.', c='k', alpha=0.5, ms=ms)
+# make dicitonary of colors and legend patches
+cmap=plt.cm.Dark2
+colors = {l:cmap(c) for l, c in zip(labels, np.linspace(0, 1, len(labels)))}
+patches = [mpatches.Patch(color=colors[l], label=l) for l in labels]
 
+
+fig, ax = plt.subplots(1, figsize=(12,8))
+sns.stripplot(x='time', y='Fluor. (a.u.)', data=tidyhex, hue='label', alpha=0.2, size=5, palette=colors)
+sns.pointplot(x='time', y='Fluor. (a.u.)', data=tidyhex, hue='label', palette=colors)
 plt.axvline(3, ls='--')
-tophex92 = pd.DataFrame([np.sort(f)[-n:] for f in rowhex92])
-for row in tophex92.iterrows():
-    plt.plot(np.full(n, row[0]), row[1], '.', c='y', alpha=0.5, ms=ms)
-plt.xlim(0, 30)
 
-import matplotlib.patches as mpatches
-kpatch = mpatches.Patch(color='k', label='75hex')
-ypatch = mpatches.Patch(color='y', label='TL092')
-bpatch = mpatches.Patch(color='b', label='75ctrl')
-plt.legend(handles=[kpatch, ypatch, bpatch])
+plt.legend(handles=patches)
+xticks_pos = np.arange(0, len(tidyhex.time.unique()), 5)
+xticks_val = np.linspace(0, tidyhex.time.max(), len(xticks_pos), dtype=int)
+plt.xticks(xticks_pos, xticks_val, rotation=60)
+ax.set(xlabel='Time (min)', ylabel='Fluor. (a.u.)')
 sns.despine()
-plt.xlabel('Time (frames)')
-plt.ylabel('Fluor. (a.u.)')
 plt.tight_layout()
-plt.savefig()
 plt.savefig('../output/hexTreatment/topFoci_75hex.png', dpi= 300, bbox_inches='tight')
+
+# take a look at 2 manually cropped cells
+cprehex = io.imread('../data/HexanediolTreatment/croppedcell_MAX_TL47pQC75_35minGalInduced_PreHexTreatment.tif')
+chex = io.imread('../data/HexanediolTreatment/croppedcell_MAX_TL47pQC75_45minGalInduced_HexTreatFrame3.tif')
+cprehex = [np.max(cprehex[i,:,:]) for i in np.arange(0, len(cprehex))]
+chex = [np.max(chex[i,:,:]) for i in np.arange(0, len(cprehex))]
+plt.plot(cprehex, '.')
+plt.plot(chex, '.')
 
 pqc72 = io.imread('/Users/porfirio/Documents/research/sternberg_lab/yeastEP/ms2pp7/data/72_TL092/MAX_05142018_pQC725_TL092_4hPostInduction.tif')
 pqc72_2 = io.imread('/Users/porfirio/Documents/research/sternberg_lab/yeastEP/ms2pp7/data/72_TL092/MAX_05142018_pQC725_TL092_3hPostInduction.tif')
