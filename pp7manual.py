@@ -11,37 +11,6 @@ from im_utils import *
 import matplotlib.patches as mpatches
 
 %matplotlib
-def drift_corr(ref, drifted, roi=slice(None)):
-    """
-    drift correction with FFT autocorr.
-    Histogram is modified with fourier shift, need to be careful
-    """
-    from skimage.feature import register_translation
-    ref_roi = ref[roi]
-    drifted_roi = drifted[roi]
-    # find XY shift with subpixel precision
-    shift, error, diffphase = register_translation(ref_roi, drifted_roi, 100)
-    # shift back in fourier space, then invert fourier
-    drift_corrected_fourier = fourier_shift(np.fft.fftn(drifted), shift)
-    drift_corrected = np.fft.ifftn(drift_corrected_fourier).real
-    return ref, drift_corrected
-
-def drift_corr_roi(ref, drifted, roi):
-    """
-    Compute shift for drift correction with FFT autocorr. of roi object
-    """
-    from skimage.feature import register_translation
-    ref_roi = ref[roi]
-    drifted_roi = drifted[roi]
-    # find XY shift
-    shift, error, diffphase = register_translation(ref_roi, drifted_roi)
-    return shift
-
-def shift_roi(shift, roi):
-    # shift roi
-    corr_roi = [slice(r.start-int(s), r.stop-int(s)) for r,s in zip(roi, shift)]
-    return corr_roi
-
 mov = io.imread('/Users/porfirio/Desktop/08222018_pQC75/MAX_08222018_TL47pQC75_10%int100uLumen_HexT15_w1Brightfield_t1.TIF - GFPlow.tif')
 mov = io.imread('/Users/porfirio/Desktop/09192018_pQC37vpQC6tl74_10%int150uCyan150msExp25uGreen200msExp_23minPosGal_w2GFPlow_proj.tif')
 # project movie through time and apply median filter for better viz range
@@ -51,86 +20,6 @@ mov_proj = skimage.filters.median(z_project(mov))
 
 mov_proj = remove_cs(z_project(nohex75), perc=0.1)
 cmap='viridis'
-# Manual selection of active cells
-
-def drawROIedge(roi, im, lw=2, fill_val='max'):
-    """
-    Draw edges around Region of Interest in image
-
-    Arguments
-    ---------
-    roi: tuple of slice objects, as obtained from zoom2roi
-    im: image that contains roi
-    lw: int
-        edge thickness to draw
-    fill_val: int
-        intensity value for edge to draw
-
-    Returns
-    --------
-    _im: copy of image with edge around roi
-
-    """
-    _im = im.copy()
-    # get value to use for edge
-    if fill_val=='max': fill_val = np.max(_im)
-    # get start and end of rectangle
-    x_start, x_end = roi[0].start, roi[0].stop
-    y_start, y_end = roi[1].start, roi[1].stop
-    # draw it
-    _im[x_start:x_start+lw, y_start:y_end] = fill_val
-    _im[x_end:x_end+lw, y_start:y_end] = fill_val
-    _im[x_start:x_end, y_start:y_start+lw] = fill_val
-    _im[x_start:x_end, y_end:y_end+lw] = fill_val
-    return _im
-
-def manual_roi_sel(mov, rois=None):
-    """
-    Manuallly crop multiple regions of interest (ROI)
-    from max int projection of movie
-
-    Arguments
-    ---------
-    mov: array like
-        movie to select ROIs from
-    rois: list, optional
-        list of coordinates, to be updated with new selection
-
-    Returns
-    ---------
-    roi_movs: array_like
-        list of ROI movies
-    rois: list
-        updated list of ROI coordinates, can be used as frame[coords]
-
-    """
-    mov_proj = skimage.filters.median(z_project(mov))
-    if not rois: rois = []
-    # max projection of movie to single frame
-    _mov_proj = mov_proj.copy()
-    fig, ax = plt.subplots(1)
-    ax.set(xticks=[], yticks=[])
-    while True:
-        plt.tight_layout() # this fixes erratic drawing of ROI contour
-        ax.set_title('zoom into roi, alt+click, then click again to add\nclose figure to finish',
-                fontdict={'fontsize':12})
-        ax.imshow(_mov_proj, cmap=cmap)
-        _ = plt.ginput(10000, timeout=0, show_clicks=True)
-        roi = zoom2roi(ax)
-        # check if roi was selected, or is just the full image
-        if roi[0].start == 0 and roi[1].stop == _mov_proj.shape[0]-1:
-            plt.close()
-            break
-        else:
-            # mark selected roi and save
-            _mov_proj = drawROIedge(roi, _mov_proj)
-            rois.append(roi)
-            # zoom out again
-            plt.xlim(0, _mov_proj.shape[1]-1)
-            plt.ylim(_mov_proj.shape[0]-1,0)
-    roi_movs = [np.stack([f[r] for f in mov]) for r in rois]
-    return roi_movs, rois
-
 
 # get drift corrected movies of selected cells
 cellmovs = []
