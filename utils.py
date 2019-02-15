@@ -7,6 +7,8 @@ import skimage
 from skimage import io
 from im_utils import *
 import scipy
+from tqdm import tqdm
+from joblib import Parallel, delayed
 
 ##############################################################################
 # Manual cell selection
@@ -71,6 +73,7 @@ def manual_roi_sel(mov, rois=None, cmap='viridis', plot_lim=5):
     # max projection of movie to single frame
     mov_proj = skimage.filters.median(z_project(mov))
     mov_proj = mov_proj.copy()
+    mov_proj = remove_cs(mov_proj, perc=0.001, tol=2)
     if rois: mov_proj = drawROIedge(rois, mov_proj)
     else: rois = []
     fig, ax = plt.subplots(1)
@@ -141,7 +144,6 @@ def shift_roi(shift, roi):
 ##############################################################################
 # operations of fluorescence traces
 ##############################################################################
-
 def smooth_traces(traces, smooth_win=3, smooth_func=np.mean):
     return pd.DataFrame(traces).rolling(smooth_win, axis=1).apply(smooth_func, raw=True).dropna(axis=1).values
 
@@ -308,17 +310,52 @@ def stackplot(traces, t=20, hspace=0.6, c='#00667A', oc='w',
 
     return fig, axes
 
-def plot_peaks(peak_traces, t=20, alpha=0.2, color='k', mean_color='k'):
+def plot_peaks(peak_traces, t=20, alpha=0.2, color='k', mean_color='k', ax=None):
     """
     Plot individual peak traces in single plot
     """
 
     peak_time = np.arange(t, 1+peak_traces.shape[1]*t, t)/60
     mean_trace = peak_traces.mean(axis=0)
-    fig, ax = plt.subplots()
-    [ax.plot(peak_time, _p, '-', alpha=alpha, color=color) for _p in peak_fluor]
+    if ax is None: fig, ax = plt.subplots()
+    [ax.plot(peak_time, _p, '-', alpha=alpha, color=color) for _p in peak_traces]
     ax.plot(peak_time, mean_trace, '--', lw=5, alpha=0.8, color=mean_color)
     ax.set(xticks=np.arange(0, 7, 1), xlabel='Time (min)', ylabel='Fluorescence (a.u.)')
     sns.despine()
     plt.tight_layout()
-    return fig, ax
+    return ax
+
+def tracking_movie(movie, tracks, x='x', y='y'):
+    """
+    Label particles being tracked on movie for visualization
+
+    Arguments
+    ---------
+    movie: array
+    tracks: pandas dataframe
+        containing columns `x`, `y` and `frame` for each particle being tracked
+
+    Returns
+    ---------
+    movie_tracks: array
+        copy of movie with circles around each identified particle
+
+    """
+
+    def track_im(f, coords, im):
+        coords = tracks[tracks.frame==f][[x, y]].dropna()
+        im_plot = im.copy()
+        try:
+            circles = [circle_perimeter(int(c[y]), int(c[x]), 10,
+                        shape=im.shape) for (_, c) in coords.iterrows()]
+        # if nan, no coordinates specified for frame, just put image
+        except ValueError:
+            return im_plot
+        for circle in circles:
+            im_plot[circle] = np.max(im_plot)
+        return im_plot
+
+    movie_tracks = Parallel(n_jobs=6)(delayed(track_im)(f, tracks, im)
+                           for f, im in tqdm(enumerate(movie)))
+
+    return np.stack(movie_tracks)
