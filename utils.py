@@ -108,24 +108,40 @@ def manual_roi_sel(mov, rois=None, cmap='viridis', plot_lim=5):
     roi_movs = [np.stack([f[r] for f in mov]) for r in rois]
     return roi_movs, rois
 
-def mask_rois_mov(rois, mov):
+def mask_rois_mov(rois, mov, n_jobs=multiprocessing.cpu_count()):
     """ Make movie mask with segmented regions only in ROIs """
 
     def mask_frame(f_number, rois, mov):
+        """ Create intensity thresholded, limited to ROIs,
+        labeled mask for frame """
+        # background is 0, start labeled ROIs at 1
         mask = np.zeros_like(mov[0])
+        labels_l, nuc_fluor_l = [], []
         for mask_val, _roi in enumerate(rois, start=1):
             _roi_im = mov[f_number][_roi]
+            # intensity based segmentation inside ROI
             _roi_mask = mask_image(_roi_im, min_size=100, block_size=101,
                     selem=skimage.morphology.disk(5), clear_border=False)
+            # get median nuclear intensity
+            labels_l.append(mask_val)
+            nuc_fluor_l.append(np.median(_roi_im[_roi_mask]))
+            # dilate segmented cells to keep particles on the edge
             _roi_mask = skimage.morphology.dilation(_roi_mask,
                         selem=skimage.morphology.disk(5))
+            # limit segmented cell to ROI
             mask[_roi] = mask_val * _roi_mask
-        return mask
+        nuc_fluor_df = pd.DataFrame({'roi':labels_l, 'nuc_fluor':nuc_fluor_l})
+        nuc_fluor_df['frame'] = f_number
 
-    mask_list = Parallel(n_jobs=n_jobs)(delayed(mask_frame)(f_number, rois, mov)
+        return (mask, nuc_fluor_df)
+
+    mask_fluor_list = Parallel(n_jobs=n_jobs)(delayed(mask_frame)(f_number, rois, mov)
         for f_number in tqdm(range(len(mov)), desc='generating masks'))
+    # unpack mask and nuclear intensity
+    mask_mov = np.stack([mi[0] for mi in mask_fluor_list])
+    nuc_fluor = pd.concat([mi[1] for mi in mask_fluor_list])
 
-    return np.stack(mask_list)
+    return mask_mov, nuc_fluor
 
 ##############################################################################
 # Drift correction
@@ -175,18 +191,18 @@ def locate_par(frame_no, frame, diameter, **kwargs):
 def locate_batch_par(mov, diameter=3, n_jobs=multiprocessing.cpu_count(), **kwargs):
     """ Parallelized batch particle locate with trackpy """
     parts = Parallel(n_jobs=n_jobs)(delayed(locate_par)(i, frame, diameter, **kwargs)
-            for i, frame in tqdm(enumerate(mov)))
+            for i, frame in tqdm(enumerate(mov), desc='Detecting peaks'))
     parts = pd.concat(parts).reset_index(drop=True)
     return parts
 
-def group_getroi(df_grouped, mask, n_jobs=multiprocessing.cpu_count()):
+def group_getroi(df, mask, n_jobs=multiprocessing.cpu_count()):
     """ Parallelized get ROI from mask for grouped dataframe """
 
     def getroi(group, mask): # need this func to provide axis arg
         return group.apply(lambda coords: mask[int(coords.frame)][int(coords.y), int(coords.x)], axis=1)
 
     app_list = Parallel(n_jobs=n_jobs)(delayed(getroi)(group, mask)
-                                    for name, group in tqdm(df_grouped))
+        for name, group in tqdm(df.groupby('frame'), desc='masking dataframe'))
 
     return pd.concat(app_list).values
 
