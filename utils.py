@@ -9,6 +9,8 @@ from im_utils import *
 import scipy
 from tqdm import tqdm
 from joblib import Parallel, delayed
+import multiprocessing
+import trackpy as tp
 
 ##############################################################################
 # Manual cell selection
@@ -142,8 +144,37 @@ def shift_roi(shift, roi):
     return corr_roi
 
 ##############################################################################
+# particle detection
+##############################################################################
+
+def locate_par(frame_no, frame, diameter, **kwargs):
+    """ Parallelizable particle locate function from trackpy """
+    part_df = tp.locate(frame, diameter, **kwargs)
+    part_df['frame'] = frame_no
+    return part_df
+
+def locate_batch_par(mov, diameter=3, n_jobs=multiprocessing.cpu_count(), **kwargs):
+    """ Parallelized batch particle locate with trackpy """
+    parts = Parallel(n_jobs=n_jobs)(delayed(locate_par)(i, frame, diameter, **kwargs)
+            for i, frame in tqdm(enumerate(mov)))
+    parts = pd.concat(parts).reset_index(drop=True)
+    return parts
+
+def group_getroi(df_grouped, mask, n_jobs=multiprocessing.cpu_count()):
+    """ Parallelized get ROI from mask for grouped dataframe """
+
+    def getroi(group, mask): # need this func to provide axis arg
+        return group.apply(lambda coords: mask[int(coords.frame)][int(coords.y), int(coords.x)], axis=1)
+
+    app_list = Parallel(n_jobs=n_jobs)(delayed(getroi)(group, mask)
+                                    for name, group in tqdm(df_grouped))
+
+    return pd.concat(app_list).values
+
+##############################################################################
 # operations of fluorescence traces
 ##############################################################################
+
 def smooth_traces(traces, smooth_win=3, smooth_func=np.mean):
     return pd.DataFrame(traces).rolling(smooth_win, axis=1).apply(smooth_func, raw=True).dropna(axis=1).values
 
@@ -355,7 +386,7 @@ def tracking_movie(movie, tracks, x='x', y='y'):
             im_plot[circle] = np.max(im_plot)
         return im_plot
 
-    movie_tracks = Parallel(n_jobs=6)(delayed(track_im)(f, tracks, im)
+    movie_tracks = Parallel(n_jobs=multiprocessing.cpu_count())(delayed(track_im)(f, tracks, im)
                            for f, im in tqdm(enumerate(movie)))
 
     return np.stack(movie_tracks)
