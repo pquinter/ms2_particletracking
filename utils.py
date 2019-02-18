@@ -13,7 +13,7 @@ import multiprocessing
 import trackpy as tp
 
 ##############################################################################
-# Manual cell selection
+# Manual cell selection and segmentation
 ##############################################################################
 
 def drawROIedge(roi, im, lw=2, fill_val='max'):
@@ -107,6 +107,25 @@ def manual_roi_sel(mov, rois=None, cmap='viridis', plot_lim=5):
         i+=1
     roi_movs = [np.stack([f[r] for f in mov]) for r in rois]
     return roi_movs, rois
+
+def mask_rois_mov(rois, mov):
+    """ Make movie mask with segmented regions only in ROIs """
+
+    def mask_frame(f_number, rois, mov):
+        mask = np.zeros_like(mov[0])
+        for mask_val, _roi in enumerate(rois, start=1):
+            _roi_im = mov[f_number][_roi]
+            _roi_mask = mask_image(_roi_im, min_size=100, block_size=101,
+                    selem=skimage.morphology.disk(5), clear_border=False)
+            _roi_mask = skimage.morphology.dilation(_roi_mask,
+                        selem=skimage.morphology.disk(5))
+            mask[_roi] = mask_val * _roi_mask
+        return mask
+
+    mask_list = Parallel(n_jobs=n_jobs)(delayed(mask_frame)(f_number, rois, mov)
+        for f_number in tqdm(range(len(mov)), desc='generating masks'))
+
+    return np.stack(mask_list)
 
 ##############################################################################
 # Drift correction
