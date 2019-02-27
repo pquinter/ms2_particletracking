@@ -21,7 +21,7 @@ from utils import plot
 ###############################################################################
 # get spot labels
 save_dir = '../output/pipeline/GPClassification/'
-parts_labeled = pd.read_csv('../output/pipeline/particles/parts_labeled.csv')
+parts_labeled = pd.read_csv(save_dir+'training/parts_labeled_trainingset.csv')
 
 # scale mass and corrwideal for classification
 scaler = StandardScaler().fit(parts_labeled[['corrwideal','mass_norm']].values)
@@ -63,5 +63,3 @@ with open(save_dir+'GPCclfRBF.p', 'wb') as f:
     pickle.dump(scaler, f)
 with open(save_dir +'classif_report.txt', "w") as text_file:
     text_file.write(classif_report)
-
-

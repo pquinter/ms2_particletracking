@@ -18,9 +18,10 @@ import im_utils
 part_dir = '../output/pipeline/particles'
 parts = pd.read_csv(part_dir+'/parts_filtered.csv')
 # sampled frames metadata
-sampled_frames = pd.read_csv('../output/pipeline/sample_movs/sampled_frames.csv')
+training_dir = '../output/pipeline/GPClassification/training/'
+sampled_frames = pd.read_csv(training_dir+'sample_movs/sampled_frames.csv')
 # Fiji manually annotated movies
-mov_path = '../output/pipeline/sample_movs/labeled/labeled_sample_mov.tif'
+mov_path = training_dir+'sample_movs/labeled/labeled_sample_mov.tif'
 mov_labeled = io.imread(mov_path)
 
 # get manual labels
@@ -48,7 +49,7 @@ rawims_lbl, bpims_lbl = rawims_all[labeled], bpims_all[labeled]
 pids_true = np.isin(pids_labeled, plabeled[plabeled.manual_label].pid.values)
 pids_false = ~pids_true
 
-plot_dir = '../output/pipeline/plots'
+plot_dir = '../output/pipeline/GPClassification/plots'
 # Plot labeled spots
 for ims, name in zip((rawims_lbl, bpims_lbl), ('raw','bp')):
     # get images and save
