@@ -252,7 +252,7 @@ def predict_prob(df, feat, clf_scaler_path, chunk_size=1e4,
     feat_scaled = scaler.transform(df[feat].values)
     # predict probability in chunks, otherwise fails
     # Defualt predicted label is just thresholded by >=50% prob, don't do that
-    prob_pred, chunk_size = [], int(chunk_size)
+    chunk_size = int(chunk_size)
     prob_pred = Parallel(n_jobs=n_jobs)(delayed(clf.predict_proba)(feat_scaled[t_:_t])
             for t_, _t in tqdm(get_cix(0, len(feat_scaled), chunk_size)))
     prob_pred = np.concatenate(prob_pred)
