@@ -3,11 +3,17 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import glob
+
 import skimage
 from skimage import io
-from im_utils import *
+import im_utils
 import scipy
+
+from joblib import Parallel, delayed
+from tqdm import tqdm
 import multiprocessing
+import numba
+
 from skimage.draw import circle_perimeter
 import matplotlib.patches as mpatches
 
@@ -230,3 +236,52 @@ def plot2dDecisionFunc(clf, xs, ys, colors=('b','r'), labels=(True, False),
         fig.colorbar(cs, ax=axes[1,0], ticks=np.linspace(0,1,5))
     plt.tight_layout()
     if save: plt.savefig(save, bbox_inches='tight')
+
+###############################################################################
+# ECDF and boostrapping
+###############################################################################
+@numba.jit(nopython=True)
+def draw_bs_sample(data):
+    """
+    Draw a bootstrap sample from a 1D data set.
+    """
+    return np.random.choice(data, size=len(data))
+
+def bs_fromdf(df, groupby, col, no_bs):
+    # Make 100 bootstrap samples
+    bs_dict = {}
+    for name, data in df.groupby(groupby):
+        bs_samples = Parallel(n_jobs=12)(delayed(draw_bs_sample)
+                (data[col].values) for _ in tqdm(range(no_bs)))
+        bs_dict[name] = bs_samples
+    return bs_dict
+
+def bs_fromdict(data_dict, no_bs):
+    # Make 100 bootstrap samples
+    bs_dict = {}
+    for name in data_dict:
+        bs_samples = Parallel(n_jobs=12)(delayed(draw_bs_sample)
+                (np.array(data_dict[name])) for _ in tqdm(range(no_bs)))
+        bs_dict[name] = bs_samples
+    return bs_dict
+
+
+def ecdfs_fromdict(bs_dict):
+    # turn into ecdfs
+    ecdf_dict = {}
+    for strain in bs_dict:
+        ecdfs = Parallel(n_jobs=12)(delayed(im_utils.ecdf)(data)
+                for data in tqdm(bs_dict[strain]))
+        ecdf_dict[strain] = ecdfs
+    return ecdf_dict
+
+def plot_ecdfdict(ecdf_dict, ax=None, colors=None, alpha=0.05):
+    if ax is None: fig, ax = plt.subplots()
+    # and plot them
+    for name in ecdf_dict:
+        for ecdf in tqdm(ecdf_dict[name]):
+            if colors is not None:
+                try: color = colors[name]
+                except TypeError: color=colors
+            ax.plot(*ecdf, alpha=alpha, color=color)
+    return ax
