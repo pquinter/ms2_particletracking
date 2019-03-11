@@ -49,7 +49,7 @@ def group_getroi(df, mask, n_jobs=multiprocessing.cpu_count()):
 
     return pd.concat(app_list).values
 
-def locate_batch(mov_dir, markers_dir='auto'):
+def locate_batch(mov_dir, movie=True):
 
     ################################################################################
     # Load data
@@ -60,10 +60,14 @@ def locate_batch(mov_dir, markers_dir='auto'):
     laser_power = int(re.search(r'(\d{3})u.*?480', mov_name).group(1))
 
     # get ROIs
-    if markers_dir == 'auto':
+    if movie:
         markers_dir = '../output/pipeline/segmentation/{}.tif'.format(mov_name)
         markers = io.imread(markers_dir)
-    else: markers = io.imread(markers_dir)
+    else:
+        markers_dir = '../output/pipeline_snapshots/segmentation/{}.tif'.format(mov_name)
+        markers = io.imread(markers_dir)
+        # make a one movie frame with image for everything else to work
+        mov = np.stack([mov])
     rois = image.markers2rois(markers)
 
     ################################################################################
@@ -74,9 +78,9 @@ def locate_batch(mov_dir, markers_dir='auto'):
     locate_kwargs = {'minmass':25, 'characterize':True, 'noise_size':1, 'smoothing_size':5}
     parts = locate_batch_par(mov, diameter=3, **locate_kwargs)
     # make markers and get median fluor with manually selected ROIs for each frame
-    markers_mov, nuc_fluor = image.refine_markers(rois, mov)
+    markers, nuc_fluor = image.refine_markers(rois, mov)
     # assign roi number to each spot; parallelized is much faster
-    parts['roi'] = group_getroi(parts, markers_mov)
+    parts['roi'] = group_getroi(parts, markers)
     # and metadata
     parts['laser_power'] = laser_power
     parts['mov_name'] = mov_name
@@ -88,13 +92,14 @@ def locate_batch(mov_dir, markers_dir='auto'):
 
     return parts
 
-def cleanup_track(parts, traj_len_thresh=1, part_per_frame=1):
+def cleanup_track(parts, traj_len_thresh=1, part_per_frame=1, remove_hotpixels=10):
     # make sure df belongs to single movie
     assert len(parts.mov_name.unique())==1
     # remove peaks outside cells
     parts_filt = parts[parts.roi>0]
     # remove hot pixels
-    parts_filt = parts_filt[parts_filt.mass<parts_filt.mass.mean()*10]
+    if remove_hotpixels:
+        parts_filt = parts_filt[parts_filt.mass<parts_filt.mass.mean()*remove_hotpixels]
     # keep two brightest spots per ROI per frame; 'tail' method allows to keep top N
     parts_filt = parts_filt.sort_values('mass').groupby(['roi','frame']).tail(part_per_frame+1).reset_index(drop=True)
     # link particles with search range of 5 px and memory of 1 frame
@@ -113,7 +118,7 @@ def cleanup_track(parts, traj_len_thresh=1, part_per_frame=1):
     parts_filt['pid'] = parts_filt['mov_name']+'_'+parts_filt['particle'].apply(str)+'_'+parts_filt['frame'].apply(str)
     return parts_filt
 
-def get_patches(mov_path, patch_dir, parts, n_jobs=multiprocessing.cpu_count()):
+def get_patches(mov_path, patch_dir, parts, movie=True, n_jobs=multiprocessing.cpu_count()):
     """ Load movie, smooth and retrieve spot patches from raw and smooth """
     # default params
     radius, noise_size, smoothing_size, threshold, im_size = 1.5, 1, 5, 1, 15
@@ -125,6 +130,7 @@ def get_patches(mov_path, patch_dir, parts, n_jobs=multiprocessing.cpu_count()):
         print('already analyzed this one, moving on...')
         return None
     raw_mov = io.imread(mov_path)
+    if not movie: raw_mov = np.stack([raw_mov])
     bp_mov = np.stack(Parallel(n_jobs=n_jobs)(delayed(tp.bandpass)(f, noise_size, smoothing_size, threshold)
             for f in tqdm(raw_mov, desc='applying bandpass filter')))
     # get particles of current movie
