@@ -16,6 +16,7 @@ import numba
 
 from skimage.draw import circle_perimeter
 import matplotlib.patches as mpatches
+import corner
 
 ##############################################################################
 # Plotting
