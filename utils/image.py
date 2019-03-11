@@ -8,6 +8,7 @@ from skimage import io
 import skimage.filters
 import skimage.segmentation
 import scipy.ndimage
+from skimage.external.tifffile import TiffFile
 
 import trackpy as tp
 from tqdm import tqdm
@@ -40,7 +41,8 @@ def proj_mov(mov_dir, savedir):
     io.imsave(saveto, mov_proj)
     io.imsave(saveto_ref, mov[10]) # as a reference if needed
 
-def segment_image(im_path, savedir=None):
+def segment_image(im_path, savedir=None, maxint_lim=(100,500),
+        minor_ax_lim = (15,500), major_ax_lim=(20,500), area_lim=(1000,5000)):
     im_name = re.search(r'.+/(.+)(?:\.tif)$', im_path).group(1)
     # check if segmented movie already exists
     if savedir is not None:
@@ -53,7 +55,6 @@ def segment_image(im_path, savedir=None):
     m_mask = im_utils.mask_image(im, min_size=100, block_size=101,
                 selem=skimage.morphology.disk(5), clear_border=True)
     # get nuclei markers with watershed transform, bound by area and intensity
-    maxint_lim, minor_ax_lim, major_ax_lim, area_lim = (100,500), (15, 500), (20, 500), (1000, 5000)
     markers_proj, reg_props = im_utils.label_sizesel(im, m_mask,
         maxint_lim, minor_ax_lim, major_ax_lim, area_lim, watershed=True)
     # convert nuclei region properties to dataframe
@@ -77,6 +78,33 @@ def markers2rois(markers):
     rois = [(slice(xy[0],xy[2]), slice(xy[1],xy[3])) for xy in rois]
     return rois
 
+def load_zproject_STKimcollection(load_pattern, savedir=None, n_jobs=6):
+    """
+    Load collection or single STK files and do maximum intensity projection
+
+    Arguments
+    ---------
+    load_pattern: str
+        pattern of file paths
+    savedir: str
+        directory to save projected images
+
+    Returns
+    ---------
+    projected: nd array or np stack
+        projected images
+
+    """
+    collection = io.ImageCollection(load_pattern, load_func=TiffFile)
+    zproj = lambda imname, im: (imname, im.z_project(im))
+    projected = Parallel(n_jobs=n_jobs)(delayed(zproj)
+            (im.filename, im.asarray()) for im in tqdm(collection))
+    if savedir:
+        strain_dir = re.search(r'(\d+_yQC\d+)', projected[0][0]).group(1)
+        strain_dir = savedir + strain_dir + '/'
+        os.mkdir(strain_dir)
+        [io.imsave(strain_dir+name[:-3]+'tif', im) for name, im in projected]
+    return projected
 ##############################################################################
 # Manual cell selection and segmentation
 ##############################################################################
