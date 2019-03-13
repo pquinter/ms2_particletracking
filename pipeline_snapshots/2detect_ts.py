@@ -11,7 +11,7 @@ movpath_list = glob.glob(data_dir)
 
 # filter out already processed movies, if any
 try:
-    parts_extant = pd.read_csv('../output/pipeline/particles/parts_filtered.csv')
+    parts_extant = pd.read_csv(part_dir)
     # get names of processed movies
     processed_movs = parts_extant.mov_name.unique()
     # and exclude them from detection
