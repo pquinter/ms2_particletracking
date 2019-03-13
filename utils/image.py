@@ -16,6 +16,7 @@ import datetime
 import pickle
 import os
 import warnings
+import glob
 
 from joblib import Parallel, delayed
 import multiprocessing
@@ -96,13 +97,19 @@ def load_zproject_STKimcollection(load_pattern, savedir=None, n_jobs=6):
 
     """
     collection = io.ImageCollection(load_pattern, load_func=TiffFile)
-    zproj = lambda imname, im: (imname, im.z_project(im))
+    # get names of any images already processed
+    strain_dir = re.search(r'(\d+_yQC\d+)', collection[0].filename).group(1)
+    strain_dir = savedir + strain_dir + '/'
+    proj_extant = [im.split('/')[-1][:-4] for im in glob.glob(strain_dir+'*tif')]
+    # filter out those
+    [warnings.warn('{} projection exists, skipping.'.format(p)) for p in proj_extant]
+    collection = [im for im in collection if im.filename[:-4] not in proj_extant]
+    zproj = lambda imname, im: (imname, im_utils.z_project(im))
     projected = Parallel(n_jobs=n_jobs)(delayed(zproj)
             (im.filename, im.asarray()) for im in tqdm(collection))
     if savedir:
-        strain_dir = re.search(r'(\d+_yQC\d+)', projected[0][0]).group(1)
-        strain_dir = savedir + strain_dir + '/'
-        os.mkdir(strain_dir)
+        try: os.mkdir(strain_dir)
+        except FileExistsError: pass
         [io.imsave(strain_dir+name[:-3]+'tif', im) for name, im in projected]
     return projected
 ##############################################################################
