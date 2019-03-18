@@ -187,7 +187,7 @@ def load_patches(spots_dir, shape='auto', filter_trunc=True):
             shape = tuple([np.median(shape_all[:,i]).astype(int) for i in range(shape_all.ndim)])
         for arr in (rawims_all, bpims_all, pids_all):
             # filter out all truncated images
-            is_full = [im.shape==shape for im in rawims_all]
+            is_full = [im.shape==shape for im in arr]
             arr = np.array(arr)[is_full]
     # Turn them into concatenated arrays
     try:
