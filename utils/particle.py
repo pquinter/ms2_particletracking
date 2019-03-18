@@ -153,31 +153,47 @@ def get_patches(mov_path, patch_dir, parts, movie=True, n_jobs=multiprocessing.c
 # particle annotation and classification
 ##############################################################################
 
-def load_patches(spots_dir, shape=(15,15), filter_trunc=True):
+def load_patches(spots_dir, shape='auto', filter_trunc=True):
     """
     Load spot image patches
     spots_dir: str
         directory containing all pickled spot images by movie
-    shape: tuple
-        shape of image patch to check for
+    shape: tuple, auto
+        tuple with shape of image patch to check for
+        auto: infer most common shape from images
     filter_trunc: bool
         whether to filter out images truncated images
     """
-    spots_path = glob.glob(spots_dir+'/*.p')
+    if '.p' not in spots_dir:
+        spots_path = glob.glob(spots_dir+'/*.p')
+    else: spots_path = [spots_dir]
     pids_all, rawims_all, bpims_all = [],[],[]
     for _path in spots_path:
         mov_name = _path.split('/')[-1][:-13]
-        with open(_path, 'rb') as f:
-            pids_all.extend(pickle.load(f))
-            rawims_all.extend(pickle.load(f))
-            bpims_all.extend(pickle.load(f))
+        try:
+            with open(_path, 'rb') as f:
+                pids_all.extend(pickle.load(f))
+                rawims_all.extend(pickle.load(f))
+                bpims_all.extend(pickle.load(f))
+        except EOFError: # try to load without pid
+            pids_all=[]
+            with open(_path, 'rb') as f:
+                rawims_all.extend(pickle.load(f))
+                bpims_all.extend(pickle.load(f))
     if filter_trunc:
+        if shape=='auto':
+            # get most common (median) image shape
+            shape_all = np.array([im.shape[-2:] for im in rawims_all])
+            shape = tuple([np.median(shape_all[:,i]).astype(int) for i in range(shape_all.ndim)])
         # filter out all truncated images
         is_full = [im.shape==shape for im in rawims_all]
-        rawims_all, bpims_all, pids_all = [np.array(l)[is_full] for l in\
-                                            (rawims_all, bpims_all, pids_all)]
-    # Turn them into concatenated arrays
-    rawims_all, bpims_all = [np.stack(a) for a in (rawims_all, bpims_all)]
+        if len(pids_all)>1:
+            rawims_all, bpims_all, pids_all = [np.array(l)[is_full] for l in\
+                                                (rawims_all, bpims_all, pids_all)]
+        else:
+            rawims_all, bpims_all = [np.array(l)[is_full] for l in (rawims_all, bpims_all)]
+        # Turn them into concatenated arrays
+        rawims_all, bpims_all = [np.stack(a) for a in (rawims_all, bpims_all)]
     return pids_all, rawims_all, bpims_all
 
 def get_manual_labels(sampled_frames, mov_name, mov_labeled, parts, brush_val=0, verbose=True):
