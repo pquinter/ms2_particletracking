@@ -176,7 +176,7 @@ def load_patches(spots_dir, shape='auto', filter_trunc=True):
                 rawims_all.extend(pickle.load(f))
                 bpims_all.extend(pickle.load(f))
         except EOFError: # try to load without pid
-            pids_all=[]
+            pids_all, rawims_all, bpims_all = [],[],[]
             with open(_path, 'rb') as f:
                 rawims_all.extend(pickle.load(f))
                 bpims_all.extend(pickle.load(f))
@@ -185,15 +185,14 @@ def load_patches(spots_dir, shape='auto', filter_trunc=True):
             # get most common (median) image shape
             shape_all = np.array([im.shape[-2:] for im in rawims_all])
             shape = tuple([np.median(shape_all[:,i]).astype(int) for i in range(shape_all.ndim)])
-        # filter out all truncated images
-        is_full = [im.shape==shape for im in rawims_all]
-        if len(pids_all)>1:
-            rawims_all, bpims_all, pids_all = [np.array(l)[is_full] for l in\
-                                                (rawims_all, bpims_all, pids_all)]
-        else:
-            rawims_all, bpims_all = [np.array(l)[is_full] for l in (rawims_all, bpims_all)]
-        # Turn them into concatenated arrays
+        for arr in (rawims_all, bpims_all, pids_all):
+            # filter out all truncated images
+            is_full = [im.shape==shape for im in rawims_all]
+            arr = np.array(arr)[is_full]
+    # Turn them into concatenated arrays
+    try:
         rawims_all, bpims_all = [np.stack(a) for a in (rawims_all, bpims_all)]
+    except TypeError: pass
     return pids_all, rawims_all, bpims_all
 
 def get_manual_labels(sampled_frames, mov_name, mov_labeled, parts, brush_val=0, verbose=True):
