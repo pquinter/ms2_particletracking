@@ -98,7 +98,7 @@ def load_zproject_STKimcollection(load_pattern, savedir=None, n_jobs=6):
     """
     collection = io.ImageCollection(load_pattern, load_func=TiffFile)
     # get names of any images already processed
-    strain_dir = re.search(r'(\d+_yQC\d+)', collection[0].filename).group(1)
+    strain_dir = re.search(r'(\d+_(:?yQC|TL).+?)_', collection[0].filename).group(1)
     strain_dir = savedir + strain_dir + '/'
     proj_extant = [im.split('/')[-1][:-4] for im in glob.glob(strain_dir+'*tif')]
     # filter out those
