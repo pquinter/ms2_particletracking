@@ -29,7 +29,7 @@ parts_filt = pd.concat(parts_filt, ignore_index=True)
 
 # update extant dataframe
 if parts_extant is not None:
-    parts_filt = pd.concat((parts_extant, parts_filt), ignore_index=True)
+    parts_filt = pd.concat((parts_extant, parts_filt), sort=True, ignore_index=True)
 parts_filt.to_csv(part_dir.format(part_dir), index=False)
 print('saved to {}'.format(part_dir))
 #
