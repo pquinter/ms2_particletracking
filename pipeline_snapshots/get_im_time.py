@@ -16,8 +16,11 @@ for ndpath in nd_paths:
     im_name = ndpath.split('/')[-1][:-3]
     # filter out those not in parts
     if im_name not in processed_ims: continue
-    with open(ndpath, 'r') as f:
-        timeim = re.search(r'.*(\d\d:\d\d:\d\d)', f.read()).group(1)
+    try:
+        with open(ndpath, 'r') as f:
+            timeim = re.search(r'.*(\d\d:\d\d:\d\d)', f.read()).group(1)
+    except OSError:
+        timeim = '00:00:00'
     time_ims.append((im_name, timeim))
 time_ims = pd.DataFrame(time_ims)
 time_ims.columns = ['mov_name','time']
