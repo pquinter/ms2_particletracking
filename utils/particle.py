@@ -13,6 +13,7 @@ from utils import image
 import os
 import glob
 import pickle
+import warnings
 
 ##############################################################################
 # particle detection
@@ -92,6 +93,46 @@ def locate_batch(mov_dir, movie=True):
 
     return parts
 
+def locate_batch_smfish(im_path, movie=True):
+
+    ################################################################################
+    # Load data
+    ################################################################################
+
+    im = io.imread(im_path)
+    mov_name = re.search(r'.+/(.+)(?:\.tif)$', im_path).group(1)
+    markers_dir = '../output/pipeline_smfish/segmentation/{}.tif'.format(mov_name)
+    markers = io.imread(markers_dir)
+    #seg_dir = '../output/pipeline_smfish/segmentation/{}.csv'.format(mov_name)
+    #seg_df = pd.read_csv(seg_dir)
+
+    im = io.imread(im_path)
+    fish = im[:,:,0] # smFISH channel
+    autof = im[:,:,1] # autofluorescent channel for cell segmentation
+    dapi = im[:,:,2] # Dapi/nuclear channel
+
+
+    ################################################################################
+    # Detect transcription sites and assign cell label
+    ################################################################################
+
+    # identify transcription particles in parallel
+    locate_kwargs = {'minmass':25, 'characterize':True, 'noise_size':1, 'smoothing_size':5}
+    parts = tp.locate(fish, diameter=3, **locate_kwargs)
+    # assign roi number to each spot; parallelized is much faster
+    parts['cell'] = parts.apply(lambda coords: markers[0][int(coords.y), int(coords.x)], axis=1)
+    parts['nucleus'] = parts.apply(lambda coords: markers[1][int(coords.y), int(coords.x)], axis=1)
+    parts['mov_name'] = mov_name
+    parts['strain'] = parts.mov_name.apply(lambda x: re.search(r'_(((yQC)|(TL)).+?)_', x).group(1))
+    # add frame for everything else to work
+    parts['frame'] = 0
+    # add pid
+    parts['particle'] = parts.index
+    parts['pid'] = parts['mov_name']+'_'+parts['particle'].apply(str)+'_'+parts['frame'].apply(str)
+
+    return parts
+
+
 def cleanup_track(parts, traj_len_thresh=1, part_per_frame=1, remove_hotpixels=10):
     # make sure df belongs to single movie
     assert len(parts.mov_name.unique())==1
@@ -131,11 +172,14 @@ def get_patches(mov_path, patch_dir, parts, movie=True, n_jobs=multiprocessing.c
         return None
     raw_mov = io.imread(mov_path)
     if not movie: raw_mov = np.stack([raw_mov])
+    if movie=='smfish':
+        raw_mov = np.stack([raw_mov[:,:,0]])
     bp_mov = np.stack(Parallel(n_jobs=n_jobs)(delayed(tp.bandpass)(f, noise_size, smoothing_size, threshold)
             for f in tqdm(raw_mov, desc='applying bandpass filter')))
     # get particles of current movie
     print('retrieving spot images...')
     _parts = parts[parts.mov_name==mov_name]
+    if len(_parts)<1: return None
     raw_ims = im_utils.get_batch_bbox(_parts, raw_mov, size=im_size, movie=True)
     # delete movies from memory! (assign None) otherwise computer breaks...
     raw_mov = None
@@ -175,7 +219,7 @@ def load_patches(spots_dir, shape='auto', filter_trunc=True):
                 pids_all.extend(pickle.load(f))
                 rawims_all.extend(pickle.load(f))
                 bpims_all.extend(pickle.load(f))
-        except EOFError: # try to load without pid
+        except EOFError:
             pids_all, rawims_all, bpims_all = [],[],[]
             with open(_path, 'rb') as f:
                 rawims_all.extend(pickle.load(f))
@@ -185,14 +229,14 @@ def load_patches(spots_dir, shape='auto', filter_trunc=True):
             # get most common (median) image shape
             shape_all = np.array([im.shape[-2:] for im in rawims_all])
             shape = tuple([np.median(shape_all[:,i]).astype(int) for i in range(shape_all.ndim)])
-        for arr in (rawims_all, bpims_all, pids_all):
-            # filter out all truncated images
-            is_full = [im.shape==shape for im in arr]
-            arr = np.array(arr)[is_full]
+        # filter out all truncated images
+        is_full = [im.shape==shape for im in rawims_all]
+        rawims_all, bpims_all, pids_all = [np.array(arr)[is_full]\
+                            for arr in (rawims_all, bpims_all, pids_all)]
     # Turn them into concatenated arrays
     try:
         rawims_all, bpims_all = [np.stack(a) for a in (rawims_all, bpims_all)]
-    except TypeError: pass
+    except ValueError: pass
     return pids_all, rawims_all, bpims_all
 
 def get_manual_labels(sampled_frames, mov_name, mov_labeled, parts, brush_val=0, verbose=True):
