@@ -112,6 +112,52 @@ def load_zproject_STKimcollection(load_pattern, savedir=None, n_jobs=6):
         except FileExistsError: pass
         [io.imsave(strain_dir+name[:-3]+'tif', im) for name, im in projected]
     return projected
+
+def segment_image_smfish(im_path, savedir=None):
+    """ Function to process images in parallel with joblib """
+    im_name = re.search(r'.+/(.+)(?:\.tif)$', im_path).group(1)
+    # check if segmented movie already exists
+    if savedir is not None:
+        seg_im_path = savedir+im_name+'.tif'
+        if os.path.isfile(seg_im_path):
+            warnings.warn('{} segmentation data exists, skipping.'.format(im_name))
+            return None
+    im = io.imread(im_path)
+    fish = im[:,:,0] # smFISH channel
+    autof = im[:,:,1] # autofluorescent channel for cell segmentation
+    dapi = im[:,:,2] # Dapi/nuclear channel
+
+    # segment nuclei, channel with best signal ================================
+    # threshold image with yen filter
+    im_thresh = dapi>skimage.filters.threshold_yen(dapi)
+    # create mask and label
+    nuc_seeds = im_utils.mask_image(dapi, im_thresh=im_thresh, block_size=101,
+                    min_size=100, selem=skimage.morphology.disk(5))
+    nuc_seeds = skimage.measure.label(nuc_seeds)
+    print('nuclei watershed reconstruction from centers...')
+    nuclei_markers, center_markers = im_utils.segment_from_seeds(dapi, nuc_seeds,
+           (100, 101, 10), dilate=False)
+
+    print('cell watershed reconstruction from nuclei...')
+    cell_markers, nuclei_markers = im_utils.segment_from_seeds(autof, nuc_seeds,
+           (1000, 151, 15), dilate=True)
+
+    markers = np.stack((cell_markers, nuclei_markers))
+
+    # make nuclei centers dataframe ===========================================
+    # get centroids (so all bbox are same size)
+    nuc_regionprops = skimage.measure.regionprops(nuclei_markers, dapi)
+    cell_regionprops = skimage.measure.regionprops(cell_markers, autof)
+    nreg_props = im_utils.regionprops2df(nuc_regionprops, props=('label', 'centroid', 'area'))
+    creg_props = im_utils.regionprops2df(cell_regionprops, props=('label', 'centroid', 'area'))
+    reg_props = nreg_props.merge(creg_props, on='label', suffixes=('_nuc','_cell'))
+    reg_props['im_name'] = im_name
+    if savedir:
+        io.imsave(seg_im_path, markers)
+        reg_props.to_csv(savedir+im_name+'.csv', index=False)
+    return markers, reg_props
+
+
 ##############################################################################
 # Manual cell selection and segmentation
 ##############################################################################
