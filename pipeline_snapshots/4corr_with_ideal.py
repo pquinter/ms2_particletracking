@@ -15,5 +15,8 @@ corrs = im_utils.corr_widealspot(rawims_all[win9x9], wsize=9, PSFwidth=4.2)
 # put in dataframe and merge
 corrs_df = pd.DataFrame({'corrwideal':corrs, 'pid':pids_all})
 parts = pd.read_csv(part_dir)
+# remove corr column if already exists
+try: parts = parts.drop('corrwideal', axis=1)
+except KeyError: pass
 parts = pd.merge(parts, corrs_df, on='pid')
 parts.to_csv(part_dir, index=False)
