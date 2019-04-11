@@ -49,9 +49,9 @@ spots_dir = '../output/pipeline_snapshots/spot_images'
 pids_all, rawims_all, bpims_all = particle.load_patches(spots_dir)
 # check if x is in y for parallel elementwise comparison
 el_isin = lambda x,y: x in y
-# get which spots were in labeled movies
-labeled = Parallel(n_jobs=12)(delayed(el_isin)(i, plabeled.pid.values)
-                                            for i in tqdm(pids_all))
+# complexity is O(1) with sets, O(n) with lists!!!
+plabeled_set = set(plabeled.pid.values)
+labeled = [i in plabeled_set for i in tqdm(pids_all)]
 # filter out spots not present in labeled movies at all
 pids_labeled = pids_all[labeled]
 rawims_lbl, bpims_lbl = rawims_all[labeled], bpims_all[labeled]
