@@ -322,3 +322,36 @@ def predict_prob(df, feat, clf_scaler_path, chunk_size=1e4,
             for t_, _t in tqdm(get_cix(0, len(feat_scaled), chunk_size)))
     prob_pred = np.concatenate(prob_pred)
     return prob_pred[:,1] # prob of being True, first col is 1-prob
+
+def impute_coords(coords_df, cols=['mov_name','roi','frame','x','y']):
+    """
+    Add and fill in missing frames with coordinates of last observed particle
+    with a forward fill.
+    If frame 0 is absent, back fill that one first, then forward fill all.
+
+    Arguments
+    ---------
+    coords_df: dataframe
+        Most likely df from groupby object. Must contain specified columns.
+    cols: list
+        columns to preserve and fill
+
+    Returns
+    -------
+    coords_df: dataframe
+        with rows including every frame in the range [0-max(coords_df.frame)]
+    """
+
+    coords_df = coords_df[cols]
+    # make dataframe with complete number of frames
+    allframes = pd.DataFrame(np.arange(0, coords_df.frame.max()+1), columns=['frame'])
+    # add to dataframe, fill with nans when frame is not present
+    coords_df = pd.merge(coords_df, allframes, on='frame', how='outer')
+    coords_df = coords_df.sort_values('frame').reset_index(drop=True)
+    # fill first frame if missing to be able to do forward fill
+    if coords_df.loc[coords_df.frame==0].x.isnull().values[0]:
+        coords_df.loc[coords_df.frame==0, cols] =\
+                coords_df.fillna(method='bfill').loc[coords_df.frame==0, cols]
+    # fill the rest
+    coords_df = coords_df.fillna(method='ffill')
+    return coords_df
