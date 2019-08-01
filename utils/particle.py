@@ -15,6 +15,7 @@ import glob
 import pickle
 import warnings
 
+n_jobs = multiprocessing.cpu_count()
 ##############################################################################
 # particle detection
 ##############################################################################
@@ -25,14 +26,14 @@ def locate_par(frame_no, frame, diameter, **kwargs):
     part_df['frame'] = frame_no
     return part_df
 
-def locate_batch_par(mov, diameter=3, n_jobs=multiprocessing.cpu_count(), **kwargs):
+def locate_batch_par(mov, diameter=3, n_jobs=n_jobs, **kwargs):
     """ Parallelized batch particle locate with trackpy """
     parts = Parallel(n_jobs=n_jobs)(delayed(locate_par)(i, frame, diameter, **kwargs)
             for i, frame in tqdm(enumerate(mov), desc='Detecting peaks'))
     parts = pd.concat(parts).reset_index(drop=True)
     return parts
 
-def group_getroi(df, mask, n_jobs=multiprocessing.cpu_count()):
+def group_getroi(df, mask, n_jobs=n_jobs):
     """ Parallelized get ROI from mask for grouped dataframe """
 
     def getroi(group, mask):
@@ -159,7 +160,8 @@ def cleanup_track(parts, traj_len_thresh=1, part_per_frame=1, remove_hotpixels=1
     parts_filt['pid'] = parts_filt['mov_name']+'_'+parts_filt['particle'].apply(str)+'_'+parts_filt['frame'].apply(str)
     return parts_filt
 
-def get_patches(mov_path, patch_dir, parts, movie=True, n_jobs=multiprocessing.cpu_count()):
+def get_patches(mov_path, patch_dir, parts, movie=True, get_bp=True,
+        n_jobs=n_jobs):
     """ Load movie, smooth and retrieve spot patches from raw and smooth """
     # default params
     radius, noise_size, smoothing_size, threshold, im_size = 1.5, 1, 5, 1, 15
@@ -174,8 +176,9 @@ def get_patches(mov_path, patch_dir, parts, movie=True, n_jobs=multiprocessing.c
     if not movie: raw_mov = np.stack([raw_mov])
     if movie=='smfish':
         raw_mov = np.stack([raw_mov[:,:,0]])
-    bp_mov = np.stack(Parallel(n_jobs=n_jobs)(delayed(tp.bandpass)(f, noise_size, smoothing_size, threshold)
-            for f in tqdm(raw_mov, desc='applying bandpass filter')))
+    if get_bp:
+        bp_mov = np.stack(Parallel(n_jobs=n_jobs)(delayed(tp.bandpass)(f, noise_size, smoothing_size, threshold)
+                for f in tqdm(raw_mov, desc='applying bandpass filter')))
     # get particles of current movie
     print('retrieving spot images...')
     _parts = parts[parts.mov_name==mov_name]
@@ -183,8 +186,10 @@ def get_patches(mov_path, patch_dir, parts, movie=True, n_jobs=multiprocessing.c
     raw_ims = im_utils.get_batch_bbox(_parts, raw_mov, size=im_size, movie=True)
     # delete movies from memory! (assign None) otherwise computer breaks...
     raw_mov = None
-    bp_ims = im_utils.get_batch_bbox(_parts, bp_mov, size=im_size, movie=True)
-    bp_mov = None
+    if get_bp:
+        bp_ims = im_utils.get_batch_bbox(_parts, bp_mov, size=im_size, movie=True)
+        bp_mov = None
+    else: bp_ims = None
     print('pickling...')
     with open(fname_ims, 'wb') as f:
         pickle.dump(_parts.pid.values, f)
@@ -197,11 +202,13 @@ def get_patches(mov_path, patch_dir, parts, movie=True, n_jobs=multiprocessing.c
 # particle annotation and classification
 ##############################################################################
 
-def load_patches(spots_dir, shape='auto', filter_trunc=True):
+def load_patches(spots_dir, bp=True, shape='auto', filter_trunc=True):
     """
     Load spot image patches
     spots_dir: str
         directory containing all pickled spot images by movie
+    bp: boolean
+        whether pickled spots includes bandpassed image set
     shape: tuple, auto
         tuple with shape of image patch to check for
         auto: infer most common shape from images
@@ -218,12 +225,12 @@ def load_patches(spots_dir, shape='auto', filter_trunc=True):
             with open(_path, 'rb') as f:
                 pids_all.extend(pickle.load(f))
                 rawims_all.extend(pickle.load(f))
-                bpims_all.extend(pickle.load(f))
+                if bp: bpims_all.extend(pickle.load(f))
         except EOFError:
             pids_all, rawims_all, bpims_all = [],[],[]
             with open(_path, 'rb') as f:
                 rawims_all.extend(pickle.load(f))
-                bpims_all.extend(pickle.load(f))
+                if bp: bpims_all.extend(pickle.load(f))
     if filter_trunc:
         if shape=='auto':
             # get most common (median) image shape
@@ -231,8 +238,12 @@ def load_patches(spots_dir, shape='auto', filter_trunc=True):
             shape = tuple([np.median(shape_all[:,i]).astype(int) for i in range(shape_all.ndim)])
         # filter out all truncated images
         is_full = [im.shape==shape for im in rawims_all]
-        rawims_all, bpims_all, pids_all = [np.array(arr)[is_full]\
-                            for arr in (rawims_all, bpims_all, pids_all)]
+        if bp:
+            rawims_all, bpims_all, pids_all = [np.array(arr)[is_full]\
+                                for arr in (rawims_all, bpims_all, pids_all)]
+        else:
+            rawims_all, pids_all = [np.array(arr)[is_full]\
+                                for arr in (rawims_all, pids_all)]
     # Turn them into concatenated arrays
     try:
         rawims_all, bpims_all = [np.stack(a) for a in (rawims_all, bpims_all)]
@@ -287,7 +298,7 @@ def get_cix(start, stop, step):
     return tqdm(zip(np.arange(start, stop, step), np.arange(start+step, stop+step, step)))
 
 def predict_prob(df, feat, clf_scaler_path, chunk_size=1e4,
-        n_jobs=multiprocessing.cpu_count()):
+        n_jobs=n_jobs):
     """
     Classify spots from dataframe
 
@@ -323,7 +334,7 @@ def predict_prob(df, feat, clf_scaler_path, chunk_size=1e4,
     prob_pred = np.concatenate(prob_pred)
     return prob_pred[:,1] # prob of being True, first col is 1-prob
 
-def impute_coords(coords_df, cols=['mov_name','roi','frame','x','y']):
+def impute_coords(coords_df, cols=['mov_name','roi','particle','frame','x','y']):
     """
     Add and fill in missing frames with coordinates of last observed particle
     with a forward fill.
@@ -344,7 +355,7 @@ def impute_coords(coords_df, cols=['mov_name','roi','frame','x','y']):
 
     coords_df = coords_df[cols]
     # make dataframe with complete number of frames
-    allframes = pd.DataFrame(np.arange(0, coords_df.frame.max()+1), columns=['frame'])
+    allframes = pd.DataFrame(np.arange(0, coords_df.frame.max()+1, dtype=int), columns=['frame'])
     # add to dataframe, fill with nans when frame is not present
     coords_df = pd.merge(coords_df, allframes, on='frame', how='outer')
     coords_df = coords_df.sort_values('frame').reset_index(drop=True)
@@ -354,4 +365,7 @@ def impute_coords(coords_df, cols=['mov_name','roi','frame','x','y']):
                 coords_df.fillna(method='bfill').loc[coords_df.frame==0, cols]
     # fill the rest
     coords_df = coords_df.fillna(method='ffill')
+    # convert back to integers
+    coords_df['roi'] = coords_df.roi.apply(int)
+    coords_df['particle'] = coords_df.particle.apply(int)
     return coords_df
